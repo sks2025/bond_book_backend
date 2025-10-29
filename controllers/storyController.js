@@ -1,7 +1,8 @@
+import mongoose from 'mongoose';
 import Story from '../models/storyModel.js';
 import User from '../models/userModel.js';
 import multer from 'multer';
-import { addUrlsToStory, addUrlsToStories } from '../utils/urlHelper.js';
+import { addUrlsToStory, addUrlsToStories, getFileUrl } from '../utils/urlHelper.js';
 // Create a new story
 export const createStory = async (req, res) => {
   try {
@@ -178,6 +179,75 @@ export const getStoriesByUser = async (req, res) => {
   }
 };
 
+// Get my stories (logged-in user's stories)
+export const getMyStories = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+
+    // Get current user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // Get current time to filter out expired stories
+    const currentTime = new Date();
+
+    const stories = await Story.find({ 
+      user: userId,
+      expiresAt: { $gt: currentTime }
+    })
+      .populate('user', 'username profilePicture')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const totalStories = await Story.countDocuments({ 
+      user: userId,
+      expiresAt: { $gt: currentTime }
+    });
+    const totalPages = Math.ceil(totalStories / limit);
+
+    // Add URLs to all stories
+    const storiesWithUrls = addUrlsToStories(stories, req);
+
+    res.status(200).json({
+      success: true,
+      message: 'My stories retrieved successfully',
+      stories: storiesWithUrls,
+      user: {
+        _id: user._id,
+        username: user.username,
+        profilePicture: user.profilePicture,
+        profilePictureUrl: user.profilePicture 
+          ? getFileUrl(user.profilePicture, req)
+          : null
+      },
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalStories,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1
+      }
+    });
+
+  } catch (error) {
+    console.error('Get my stories error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching my stories",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 // Get single story by ID
 export const getStoryById = async (req, res) => {
   try {
@@ -328,8 +398,21 @@ export const getStoryFeed = async (req, res) => {
     const user = await User.findById(userId).select('following');
     const followingIds = user.following;
     
-    // Add current user to see their own stories
-    followingIds.push(userId);
+    // Only show stories from followed users (exclude own stories for Instagram-like behavior)
+    if (followingIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No stories from followed users',
+        stories: [],
+        pagination: {
+          currentPage: page,
+          totalPages: 0,
+          totalStories: 0,
+          hasNextPage: false,
+          hasPrevPage: false
+        }
+      });
+    }
 
     // Get current time to filter out expired stories
     const currentTime = new Date();
@@ -349,9 +432,13 @@ export const getStoryFeed = async (req, res) => {
     });
     const totalPages = Math.ceil(totalStories / limit);
 
+    // Add URLs to all stories
+    const storiesWithUrls = addUrlsToStories(stories, req);
+
     res.status(200).json({
       success: true,
-      stories,
+      message: 'Story feed retrieved successfully',
+      stories: storiesWithUrls,
       pagination: {
         currentPage: page,
         totalPages,
@@ -459,16 +546,37 @@ export const getStoryStats = async (req, res) => {
 // Get all stories with user grouping (for story highlights)
 export const getStoriesGroupedByUser = async (req, res) => {
   try {
+    const userId = req.user.userId;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    // Get user's following list
+    const user = await User.findById(userId).select('following');
+    const followingIds = user.following.map(id => new mongoose.Types.ObjectId(id));
+    
+    if (followingIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No stories from followed users',
+        storiesByUser: [],
+        pagination: {
+          currentPage: page,
+          totalPages: 0,
+          totalUsers: 0,
+          hasNextPage: false,
+          hasPrevPage: false
+        }
+      });
+    }
+
     const currentTime = new Date();
 
-    // Aggregate to group stories by user
+    // Aggregate to group stories by user (only from followed users)
     const storiesByUser = await Story.aggregate([
       {
         $match: {
+          user: { $in: followingIds },
           expiresAt: { $gt: currentTime }
         }
       },
@@ -524,6 +632,7 @@ export const getStoriesGroupedByUser = async (req, res) => {
     const totalUsers = await Story.aggregate([
       {
         $match: {
+          user: { $in: followingIds },
           expiresAt: { $gt: currentTime }
         }
       },
@@ -540,9 +649,40 @@ export const getStoriesGroupedByUser = async (req, res) => {
     const totalUsersCount = totalUsers.length > 0 ? totalUsers[0].totalUsers : 0;
     const totalPages = Math.ceil(totalUsersCount / limit);
 
+    // Add URLs to stories and user profile pictures
+    const storiesByUserWithUrls = storiesByUser.map(group => {
+      const userObj = {
+        _id: group.user._id,
+        username: group.user.username,
+        profilePicture: group.user.profilePicture,
+        profilePictureUrl: group.user.profilePicture 
+          ? getFileUrl(group.user.profilePicture, req) 
+          : null
+      };
+
+      const storiesWithUrls = group.stories.map(story => {
+        const storyObj = { ...story };
+        if (story.image) {
+          storyObj.imageUrl = getFileUrl(story.image, req);
+        }
+        if (story.video) {
+          storyObj.videoUrl = getFileUrl(story.video, req);
+        }
+        return storyObj;
+      });
+
+      return {
+        _id: group._id,
+        user: userObj,
+        stories: storiesWithUrls,
+        storyCount: group.storyCount
+      };
+    });
+
     res.status(200).json({
       success: true,
-      storiesByUser,
+      message: 'Stories grouped by user retrieved successfully',
+      storiesByUser: storiesByUserWithUrls,
       pagination: {
         currentPage: page,
         totalPages,
