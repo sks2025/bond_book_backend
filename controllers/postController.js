@@ -1,5 +1,5 @@
 import Post from '../models/postModel.js';
-import { addUrlsToPost, addUrlsToPosts } from '../utils/urlHelper.js';
+import { addUrlsToPost, addUrlsToPosts, getFileUrl } from '../utils/urlHelper.js';
 
 // Create a new post
 export const createPost = async (req, res) => {
@@ -51,11 +51,31 @@ export const createPost = async (req, res) => {
 export const getAllPosts = async (req, res) => {
   try {
     const posts = await Post.find()
-      .populate('user', 'name email profilePicture')
+      .populate('user', 'username profilePicture')
       .sort({ createdAt: -1 });
     
-    // Add URLs to all posts
-    const postsWithUrls = addUrlsToPosts(posts, req);
+    // Add URLs to all posts and user profile pictures
+    const postsWithUrls = posts.map(post => {
+      const postObj = post.toObject ? post.toObject() : post;
+      
+      // Add post media URLs
+      if (postObj.image) {
+        postObj.imageUrl = getFileUrl(postObj.image, req);
+      }
+      if (postObj.video) {
+        postObj.videoUrl = getFileUrl(postObj.video, req);
+      }
+      
+      // Only include username and profilePictureUrl in user object
+      if (postObj.user) {
+        postObj.user = {
+          username: postObj.user.username,
+          profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+        };
+      }
+      
+      return postObj;
+    });
     
     res.status(200).json({
       message: 'Posts retrieved successfully',
