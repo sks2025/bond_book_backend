@@ -22,7 +22,7 @@ app.use(cookieParser());
 // Serve static files from the uploads directory
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-// Routes
+// Routes dsdss
 app.use('/api/users', userRouter);
 app.use('/api/posts', postRouter);
 app.use('/api/stories', storyRouter);
