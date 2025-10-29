@@ -190,11 +190,20 @@ export const getPostsByUser = async (req, res) => {
     const { userId } = req.params;
     
     const posts = await Post.find({ user: userId })
-      .populate('user', 'name email profilePicture')
+      .populate('user', 'username profilePicture')
       .sort({ createdAt: -1 });
     
-    // Add URLs to all posts
-    const postsWithUrls = addUrlsToPosts(posts, req);
+    // Add URLs and trim user info
+    const postsWithUrls = posts.map(post => {
+      const postObj = addUrlsToPost(post, req);
+      if (postObj.user) {
+        postObj.user = {
+          username: postObj.user.username,
+          profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+        };
+      }
+      return postObj;
+    });
     
     res.status(200).json({
       message: 'User posts retrieved successfully',
@@ -203,6 +212,36 @@ export const getPostsByUser = async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting user posts:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Get posts of the currently authenticated user
+export const getMyPosts = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const posts = await Post.find({ user: userId })
+      .populate('user', 'username profilePicture')
+      .sort({ createdAt: -1 });
+
+    const postsWithUrls = posts.map(post => {
+      const postObj = addUrlsToPost(post, req);
+      if (postObj.user) {
+        postObj.user = {
+          username: postObj.user.username,
+          profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+        };
+      }
+      return postObj;
+    });
+
+    res.status(200).json({
+      message: 'My posts retrieved successfully',
+      posts: postsWithUrls,
+      count: postsWithUrls.length
+    });
+  } catch (error) {
+    console.error('Error getting my posts:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };

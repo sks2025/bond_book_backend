@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import User from './userModel.js';
 
 const postSchema = new mongoose.Schema({
   user: {
@@ -23,6 +24,9 @@ const postSchema = new mongoose.Schema({
   commentCount: { type: Number, default: 0 },
   likeCount: { type: Number, default: 0 }
 }, { timestamps: true });
+
+// Index for faster per-user queries
+postSchema.index({ user: 1, createdAt: -1 });
 
 // Simple validation - at least one media file required
 postSchema.pre('validate', function(next) {
@@ -68,6 +72,38 @@ postSchema.methods.removeComment = function(commentId, userId) {
     return this.save();
   }
   throw new Error('Comment not found or not authorized');
+};
+
+// Maintain user's postsCount similar to followers/following counts
+postSchema.pre('save', async function(next) {
+  try {
+    if (this.isNew) {
+      await User.findByIdAndUpdate(this.user, { $inc: { postsCount: 1 } });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+postSchema.pre('deleteOne', { document: true, query: false }, async function(next) {
+  try {
+    await User.findByIdAndUpdate(this.user, { $inc: { postsCount: -1 } });
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+postSchema.post('findOneAndDelete', async function(doc) {
+  if (doc) {
+    await User.findByIdAndUpdate(doc.user, { $inc: { postsCount: -1 } });
+  }
+});
+
+// Static: total posts created by a specific user
+postSchema.statics.countPostsByUser = function(userId) {
+  return this.countDocuments({ user: userId });
 };
 
 const Post = mongoose.model('Post', postSchema);

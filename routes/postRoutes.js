@@ -6,6 +6,7 @@ import {
     updatePost,
     deletePost,
     getPostsByUser,
+    getMyPosts,
     getPostsByTags,
     togglePostLike,
     getPostLikes,
@@ -26,14 +27,8 @@ router.post('/', userAuth, upload.any(), createPost);
 // Get all posts
 router.get('/', getAllPosts);
 
-// Get post by ID
-router.get('/:id', getPostById);
-
-// Update post
-router.put('/:id', userAuth, updatePost);
-
-// Delete post
-router.delete('/:id', userAuth, deletePost);
+// Get posts for the logged-in user (must be before /:id route)
+router.get('/me', userAuth, getMyPosts);
 
 // Get posts by user
 router.get('/user/:userId', getPostsByUser);
@@ -43,6 +38,15 @@ router.get('/user/:userId/likes/total', getTotalLikesByUser);
 
 // Get posts by tag
 router.get('/tag/:tag', getPostsByTags);
+
+// Get post by ID (must be last to avoid conflicts)
+router.get('/:id', getPostById);
+
+// Update post
+router.put('/:id', userAuth, updatePost);
+
+// Delete post
+router.delete('/:id', userAuth, deletePost);
 
 // Like/unlike post
 router.put('/:id/likes', userAuth, togglePostLike);
