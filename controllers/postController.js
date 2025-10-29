@@ -214,7 +214,7 @@ export const getPostsByTags = async (req, res) => {
 export const togglePostLike = async (req, res) => {
   try {
     const { id } = req.params;
-    const { action } = req.body;
+    const { action, like } = req.body; // Accept both 'action' and 'like' fields
     const userId = req.user.userId;
 
     const post = await Post.findById(id);
@@ -222,20 +222,28 @@ export const togglePostLike = async (req, res) => {
       return res.status(404).json({ message: 'Post not found' });
     }
 
-    if (action === 1) {
+    // Use either 'action' or 'like' field
+    const actionValue = action !== undefined ? action : like;
+    
+    // Convert action to number and handle string inputs
+    const actionNum = parseInt(actionValue);
+    
+    if (actionNum === 1 || actionValue === 1 || actionValue === '1' || actionValue === true) {
       await post.likePost(userId);
       res.status(200).json({
         message: 'Post liked successfully',
         likes: post.likes
       });
-    } else if (action === 0) {
+    } else if (actionNum === 0 || actionValue === 0 || actionValue === '0' || actionValue === false) {
       await post.unlikePost(userId);
       res.status(200).json({
         message: 'Post unliked successfully',
         likes: post.likes
       });
     } else {
-      res.status(400).json({ message: 'Invalid action. Send 1 to like or 0 to unlike' });
+      res.status(400).json({ 
+        message: 'Invalid action. Send {"action": 1} or {"like": 1} to like. Send {"action": 0} or {"like": 0} to unlike' 
+      });
     }
   } catch (error) {
     console.error('Error toggling post like:', error);
