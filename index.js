@@ -3,10 +3,12 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import cookieParser from 'cookie-parser';
 import path from 'path';
+import { createServer } from 'http';
 import userRouter from './routes/userRoutes.js';
 import postRouter from './routes/postRoutes.js';
 import storyRouter from './routes/storyRoutes.js';
 import messageRouter from './routes/messageRoutes.js';
+import { initializeSocket, setSocketIO } from './config/socket.js';
 
 dotenv.config();
 
@@ -50,7 +52,15 @@ const connectDB = async () => {
 // Connect to database
 connectDB();
 
-app.listen(PORT, () => {
+// Create HTTP server
+const httpServer = createServer(app);
+
+// Initialize Socket.IO
+const io = initializeSocket(httpServer);
+setSocketIO(io);
+
+httpServer.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     console.log(`http://localhost:${PORT}`);
+    console.log(`Socket.IO is ready for real-time messaging`);
 });

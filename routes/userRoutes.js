@@ -10,7 +10,10 @@ import {
   deleteProfile,
   getCurrentUser,
   logoutUser,
-  uploadProfilePicture
+  uploadProfilePicture,
+  followUser,
+  unfollowUser,
+  checkConnection
 } from '../controllers/UserController.js';
 import userAuth from '../middleware/userAuth.js';
 import upload from '../middleware/upload.js';
@@ -32,5 +35,10 @@ userRouter.put('/update-profile', userAuth, updateProfile);
 // Upload profile picture (form-data -> file field name can be any; using upload.any())
 userRouter.put('/profile-picture', userAuth, upload.any(), uploadProfilePicture);
 userRouter.delete('/delete-profile', userAuth, deleteProfile);
+
+// Follow/Unfollow routes
+userRouter.post('/follow', userAuth, followUser);
+userRouter.post('/unfollow', userAuth, unfollowUser);
+userRouter.get('/connection/:otherUserId', userAuth, checkConnection);
 
 export default userRouter;

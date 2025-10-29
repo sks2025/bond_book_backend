@@ -1,5 +1,7 @@
 import Message from '../models/messageModel.js';
 import User from '../models/userModel.js';
+import { getSocketIO, emitMessage, emitToConversation } from '../config/socket.js';
+import { getFileUrl } from '../utils/urlHelper.js';
 
 // Send a message
 export const sendMessage = async (req, res) => {
@@ -31,6 +33,28 @@ export const sendMessage = async (req, res) => {
       });
     }
 
+    // Check if users follow each other (mutual connection required)
+    const senderUser = await User.findById(sender);
+    const receiverUser = await User.findById(receiver);
+
+    if (!senderUser || !receiverUser) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    const senderFollowsReceiver = senderUser.following.includes(receiver);
+    const receiverFollowsSender = receiverUser.following.includes(sender);
+    const isConnected = senderFollowsReceiver && receiverFollowsSender;
+
+    if (!isConnected) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You must follow each other to send messages. Please follow the user first.' 
+      });
+    }
+
     const newMessage = new Message({
       sender,
       receiver,
@@ -43,10 +67,45 @@ export const sendMessage = async (req, res) => {
     await savedMessage.populate('sender', 'username profilePicture');
     await savedMessage.populate('receiver', 'username profilePicture');
 
+    // Prepare message data for socket emission
+    const messageData = {
+      _id: savedMessage._id,
+      sender: {
+        _id: savedMessage.sender._id,
+        username: savedMessage.sender.username,
+        profilePicture: savedMessage.sender.profilePicture,
+        profilePictureUrl: savedMessage.sender.profilePicture 
+          ? getFileUrl(savedMessage.sender.profilePicture, req) 
+          : null
+      },
+      receiver: {
+        _id: savedMessage.receiver._id,
+        username: savedMessage.receiver.username,
+        profilePicture: savedMessage.receiver.profilePicture,
+        profilePictureUrl: savedMessage.receiver.profilePicture 
+          ? getFileUrl(savedMessage.receiver.profilePicture, req) 
+          : null
+      },
+      content: savedMessage.content,
+      isRead: savedMessage.isRead,
+      createdAt: savedMessage.createdAt,
+      updatedAt: savedMessage.updatedAt
+    };
+
+    // Emit socket event to receiver in real-time
+    const io = getSocketIO();
+    if (io) {
+      // Emit to receiver's personal room
+      emitMessage(io, receiver, messageData);
+      
+      // Also emit to conversation room (if both users are in the conversation)
+      emitToConversation(io, sender.toString(), receiver.toString(), messageData);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Message sent successfully',
-      data: savedMessage
+      data: messageData
     });
   } catch (error) {
     console.error('Error sending message:', error);
