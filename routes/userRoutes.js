@@ -36,7 +36,7 @@ userRouter.put('/update-profile', userAuth, updateProfile);
 userRouter.put('/profile-picture', userAuth, upload.any(), uploadProfilePicture);
 userRouter.delete('/delete-profile', userAuth, deleteProfile);
 
-// Follow/Unfollow routes
+// Follow/Unfollow routes (must be before any /:id routes to avoid conflicts)
 userRouter.post('/follow', userAuth, followUser);
 userRouter.post('/unfollow', userAuth, unfollowUser);
 userRouter.get('/connection/:otherUserId', userAuth, checkConnection);
