@@ -20,7 +20,8 @@ const postSchema = new mongoose.Schema({
     comment: { type: String, required: true },
     createdAt: { type: Date, default: Date.now }
   }],
-  commentCount: { type: Number, default: 0 }
+  commentCount: { type: Number, default: 0 },
+  likeCount: { type: Number, default: 0 }
 }, { timestamps: true });
 
 // Simple validation - at least one media file required
@@ -36,6 +37,7 @@ postSchema.methods.likePost = function(userId) {
   if (!this.likedBy.includes(userId)) {
     this.likedBy.push(userId);
     this.likes = this.likedBy.length;
+    this.likeCount = this.likedBy.length;
   }
   return this.save();
 };
@@ -43,6 +45,7 @@ postSchema.methods.likePost = function(userId) {
 postSchema.methods.unlikePost = function(userId) {
   this.likedBy = this.likedBy.filter(id => id.toString() !== userId.toString());
   this.likes = this.likedBy.length;
+  this.likeCount = this.likedBy.length;
   return this.save();
 };
 

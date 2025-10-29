@@ -187,6 +187,30 @@ export const getPostsByUser = async (req, res) => {
   }
 };
 
+// Get total like count across all posts by a user
+export const getTotalLikesByUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Aggregate total likes for all posts by user
+    const result = await Post.aggregate([
+      { $match: { user: new (require('mongoose')).Types.ObjectId(userId) } },
+      { $group: { _id: null, totalLikes: { $sum: { $ifNull: ['$likes', 0] } } } }
+    ]);
+
+    const totalLikes = result.length > 0 ? result[0].totalLikes : 0;
+
+    res.status(200).json({
+      message: 'Total likes computed successfully',
+      userId,
+      totalLikes
+    });
+  } catch (error) {
+    console.error('Error getting total likes by user:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 // Get posts by tags
 export const getPostsByTags = async (req, res) => {
   try {

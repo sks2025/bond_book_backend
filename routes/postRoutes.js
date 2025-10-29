@@ -12,7 +12,8 @@ import {
     checkPostLikeStatus,
     getPostComments,
     addPostComment,
-    deletePostComment
+    deletePostComment,
+    getTotalLikesByUser
 } from '../controllers/postController.js';
 import userAuth from '../middleware/userAuth.js';
 import upload from '../middleware/upload.js';
@@ -36,6 +37,9 @@ router.delete('/:id', userAuth, deletePost);
 
 // Get posts by user
 router.get('/user/:userId', getPostsByUser);
+
+// Get total like count across all posts by a user
+router.get('/user/:userId/likes/total', getTotalLikesByUser);
 
 // Get posts by tag
 router.get('/tag/:tag', getPostsByTags);
