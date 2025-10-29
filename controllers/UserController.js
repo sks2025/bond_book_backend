@@ -1,4 +1,5 @@
 import User from '../models/userModel.js';
+import Post from '../models/postModel.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import sendEmail from '../config/nodeMailer.js';
@@ -790,12 +791,26 @@ export const getCurrentUser = async (req, res) => {
       });
     }
 
+    // Ensure postsCount exists, if not calculate it
+    let postsCount = user.postsCount || 0;
+    if (!user.postsCount || user.postsCount === undefined) {
+      postsCount = await Post.countDocuments({ user: userId });
+      // Update user with postsCount if it was missing
+      if (postsCount > 0) {
+        user.postsCount = postsCount;
+        await user.save();
+      }
+    }
+
+    const userResponse = {
+      ...user.toObject(),
+      postsCount: postsCount,
+      profilePictureUrl: getFileUrl(user.profilePicture, req)
+    };
+
     return res.status(200).json({
       success: true,
-      user: {
-        ...user.toObject(),
-        profilePictureUrl: getFileUrl(user.profilePicture, req)
-      }
+      user: userResponse
     });
 
   } catch (error) {
