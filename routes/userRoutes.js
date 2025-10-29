@@ -9,9 +9,11 @@ import {
   updateProfile,
   deleteProfile,
   getCurrentUser,
-  logoutUser
+  logoutUser,
+  uploadProfilePicture
 } from '../controllers/UserController.js';
 import userAuth from '../middleware/userAuth.js';
+import upload from '../middleware/upload.js';
 
 const userRouter = express.Router();
 
@@ -27,6 +29,8 @@ userRouter.post('/logout', logoutUser);
 // Protected routes (authentication required)
 userRouter.get('/profile', userAuth, getCurrentUser);
 userRouter.put('/update-profile', userAuth, updateProfile);
+// Upload profile picture (form-data -> file field name can be any; using upload.any())
+userRouter.put('/profile-picture', userAuth, upload.any(), uploadProfilePicture);
 userRouter.delete('/delete-profile', userAuth, deleteProfile);
 
 export default userRouter;

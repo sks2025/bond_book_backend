@@ -2,6 +2,7 @@ import User from '../models/userModel.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import sendEmail from '../config/nodeMailer.js';
+import { getFileUrl } from '../utils/urlHelper.js';
 
 // Register a new user
 export async function register(request, response) {
@@ -639,6 +640,7 @@ export const updateProfile = async (req, res) => {
       username: user.username,
       email: user.email,
       profilePicture: user.profilePicture,
+      profilePictureUrl: getFileUrl(user.profilePicture, req),
       bio: user.bio,
       followers: user.followers,
       following: user.following,
@@ -658,6 +660,54 @@ export const updateProfile = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Internal server error during profile update"
+    });
+  }
+};
+
+// Upload/Update Profile Picture (multipart form-data with a file)
+export const uploadProfilePicture = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Expecting a file from multer: either req.file or first entry in req.files
+    const file = req.file || (req.files && req.files[0]);
+
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Profile picture file is required'
+      });
+    }
+
+    if (!file.mimetype.startsWith('image/')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Only image files are allowed for profile picture'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Save relative disk path
+    user.profilePicture = file.path;
+    await user.save();
+
+    const profilePictureUrl = getFileUrl(user.profilePicture, req);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      profilePicture: user.profilePicture,
+      profilePictureUrl
+    });
+  } catch (error) {
+    console.error('Upload profile picture error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error during profile picture upload'
     });
   }
 };
@@ -742,7 +792,10 @@ export const getCurrentUser = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      user: user
+      user: {
+        ...user.toObject(),
+        profilePictureUrl: getFileUrl(user.profilePicture, req)
+      }
     });
 
   } catch (error) {
