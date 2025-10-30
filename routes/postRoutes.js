@@ -14,7 +14,8 @@ import {
     getPostComments,
     addPostComment,
     deletePostComment,
-    getTotalLikesByUser
+    getTotalLikesByUser,
+    searchPosts
 } from '../controllers/postController.js';
 import userAuth from '../middleware/userAuth.js';
 import upload from '../middleware/upload.js';
@@ -26,6 +27,10 @@ router.post('/', userAuth, upload.any(), createPost);
 
 // Get all posts
 router.get('/', getAllPosts);
+
+// Search posts by caption, username, or tag
+router.get('/search', searchPosts);
+router.post('/search', searchPosts);
 
 // Get posts for the logged-in user (must be before /:id route)
 router.get('/me', userAuth, getMyPosts);

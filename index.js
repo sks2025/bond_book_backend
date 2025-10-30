@@ -8,6 +8,7 @@ import userRouter from './routes/userRoutes.js';
 import postRouter from './routes/postRoutes.js';
 import storyRouter from './routes/storyRoutes.js';
 import messageRouter from './routes/messageRoutes.js';
+import myfriendRouter from './routes/myfriendRoutes.js';
 import { initializeSocket, setSocketIO } from './config/socket.js';
 
 dotenv.config();
@@ -27,6 +28,7 @@ app.use('/api/users', userRouter);
 app.use('/api/posts', postRouter);
 app.use('/api/stories', storyRouter);
 app.use('/api/messages', messageRouter);
+app.use('/api/myfriends', myfriendRouter);
 
 
 

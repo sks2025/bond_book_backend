@@ -1,4 +1,5 @@
 import Post from '../models/postModel.js';
+import User from '../models/userModel.js';
 import { addUrlsToPost, addUrlsToPosts, getFileUrl } from '../utils/urlHelper.js';
 
 // Create a new post
@@ -289,6 +290,97 @@ export const getPostsByTags = async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting posts by tag:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Search posts by caption (post name), username, or tag
+export const searchPosts = async (req, res) => {
+  try {
+    // Accept both GET with query params and POST with JSON body
+    const isPost = req.method === 'POST';
+    const qParam = isPost ? (req.body?.q || req.body?.query) : req.query.q;
+    const scopeParam = isPost ? req.body?.scope : req.query.scope;
+    const postname = isPost ? req.body?.postname : undefined; // alias for caption
+    const usernameField = isPost ? req.body?.username : undefined;
+    const tagname = isPost ? (req.body?.tagname || req.body?.tag) : undefined;
+    const tagsRaw = isPost ? req.body?.tags : undefined; // accept 'tags' too (string or array)
+
+    const hasExplicitFields = !!(postname || usernameField || tagname || tagsRaw);
+    const baseQuery = (qParam || '').toString().trim();
+    const regex = baseQuery ? new RegExp(baseQuery, 'i') : null;
+    const scopes = (scopeParam ? scopeParam.split(',') : ['caption', 'username', 'tag']).map(s => s.trim());
+
+    const orFilters = [];
+
+    if (hasExplicitFields) {
+      if (postname) {
+        orFilters.push({ caption: { $regex: new RegExp(postname, 'i') } });
+      }
+      if (tagname) {
+        orFilters.push({ tags: { $elemMatch: { $regex: new RegExp(tagname, 'i') } } });
+      }
+      if (tagsRaw) {
+        const tagsList = Array.isArray(tagsRaw) ? tagsRaw : [tagsRaw];
+        const tagRegexes = tagsList.filter(Boolean).map(t => new RegExp(t, 'i'));
+        if (tagRegexes.length > 0) {
+          orFilters.push({ tags: { $in: tagRegexes } });
+        }
+      }
+    } else if (regex) {
+      if (scopes.includes('caption')) {
+        orFilters.push({ caption: { $regex: regex } });
+      }
+      if (scopes.includes('tag') || scopes.includes('tags')) {
+        orFilters.push({ tags: { $elemMatch: { $regex: regex } } });
+      }
+    }
+
+    let userIdFilter = null;
+    if (hasExplicitFields && usernameField) {
+      const users = await User.find({ username: { $regex: new RegExp(usernameField, 'i') } }, { _id: 1 });
+      const userIds = users.map(u => u._id);
+      if (userIds.length > 0) {
+        userIdFilter = { user: { $in: userIds } };
+        orFilters.push(userIdFilter);
+      }
+    } else if (!hasExplicitFields && (scopes.includes('username') || scopes.includes('user')) && regex) {
+      const users = await User.find({ username: { $regex: regex } }, { _id: 1 });
+      const userIds = users.map(u => u._id);
+      if (userIds.length > 0) {
+        userIdFilter = { user: { $in: userIds } };
+        orFilters.push(userIdFilter);
+      }
+    }
+
+    // If no valid scopes resolved to filters, return empty
+    if (orFilters.length === 0) {
+      return res.status(200).json({ message: 'No results', posts: [], count: 0 });
+    }
+
+    const filter = { $or: orFilters };
+    const posts = await Post.find(filter)
+      .populate('user', 'username profilePicture')
+      .sort({ createdAt: -1 });
+
+    const postsWithUrls = posts.map(post => {
+      const postObj = addUrlsToPost(post, req);
+      if (postObj.user) {
+        postObj.user = {
+          username: postObj.user.username,
+          profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+        };
+      }
+      return postObj;
+    });
+
+    res.status(200).json({
+      message: 'Search results',
+      posts: postsWithUrls,
+      count: postsWithUrls.length
+    });
+  } catch (error) {
+    console.error('Error searching posts:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
