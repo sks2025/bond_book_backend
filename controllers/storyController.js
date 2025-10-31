@@ -417,32 +417,99 @@ export const getStoryFeed = async (req, res) => {
     // Get current time to filter out expired stories
     const currentTime = new Date();
 
-    const stories = await Story.find({ 
-      user: { $in: followingIds },
-      expiresAt: { $gt: currentTime }
-    })
-      .populate('user', 'username profilePicture')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    // Group stories by user so each followed user's stories are bundled together
+    const grouped = await Story.aggregate([
+      {
+        $match: {
+          user: { $in: followingIds },
+          expiresAt: { $gt: currentTime }
+        }
+      },
+      { $sort: { createdAt: -1 } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'userInfo'
+        }
+      },
+      { $unwind: '$userInfo' },
+      {
+        $group: {
+          _id: '$user',
+          user: { $first: '$userInfo' },
+          latestCreatedAt: { $max: '$createdAt' },
+          stories: {
+            $push: {
+              _id: '$_id',
+              image: '$image',
+              video: '$video',
+              createdAt: '$createdAt',
+              expiresAt: '$expiresAt'
+            }
+          },
+          storyCount: { $sum: 1 }
+        }
+      },
+      { $sort: { latestCreatedAt: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $project: {
+          _id: 1,
+          user: { _id: '$user._id', username: '$user.username', profilePicture: '$user.profilePicture' },
+          stories: 1,
+          storyCount: 1
+        }
+      }
+    ]);
 
-    const totalStories = await Story.countDocuments({ 
-      user: { $in: followingIds },
-      expiresAt: { $gt: currentTime }
+    // Compute total groups for pagination
+    const totalGroupsAgg = await Story.aggregate([
+      {
+        $match: {
+          user: { $in: followingIds },
+          expiresAt: { $gt: currentTime }
+        }
+      },
+      { $group: { _id: '$user' } },
+      { $count: 'total' }
+    ]);
+    const totalGroups = totalGroupsAgg.length > 0 ? totalGroupsAgg[0].total : 0;
+    const totalPages = Math.ceil(totalGroups / limit);
+
+    // Add URLs for stories' media and user's profilePicture
+    const result = grouped.map(group => {
+      const userObj = {
+        _id: group.user._id,
+        username: group.user.username,
+        profilePictureUrl: group.user.profilePicture ? getFileUrl(group.user.profilePicture, req) : null
+      };
+
+      const storiesWithUrls = group.stories.map(s => {
+        const entry = { ...s };
+        if (entry.image) entry.imageUrl = getFileUrl(entry.image, req);
+        if (entry.video) entry.videoUrl = getFileUrl(entry.video, req);
+        return entry;
+      });
+
+      return {
+        _id: group._id,
+        user: userObj,
+        stories: storiesWithUrls,
+        storyCount: group.storyCount
+      };
     });
-    const totalPages = Math.ceil(totalStories / limit);
-
-    // Add URLs to all stories
-    const storiesWithUrls = addUrlsToStories(stories, req);
 
     res.status(200).json({
       success: true,
       message: 'Story feed retrieved successfully',
-      stories: storiesWithUrls,
+      stories: result,
       pagination: {
         currentPage: page,
         totalPages,
-        totalStories,
+        totalUsers: totalGroups,
         hasNextPage: page < totalPages,
         hasPrevPage: page > 1
       }
