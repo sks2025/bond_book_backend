@@ -458,8 +458,8 @@ export const getStoryFeed = async (req, res) => {
   }
 };
 
-// Clean up expired stories (utility function)
-export const cleanupExpiredStories = async (req, res) => {
+// Internal function to clean up expired stories (called automatically)
+const autoCleanupExpiredStories = async () => {
   try {
     const currentTime = new Date();
     
@@ -467,10 +467,26 @@ export const cleanupExpiredStories = async (req, res) => {
       expiresAt: { $lt: currentTime }
     });
 
+    if (result.deletedCount > 0) {
+      console.log(`✅ Auto-cleaned ${result.deletedCount} expired story/stories`);
+    }
+
+    return result.deletedCount;
+  } catch (error) {
+    console.error('❌ Auto-cleanup expired stories error:', error);
+    return 0;
+  }
+};
+
+// Clean up expired stories (utility function - manual trigger via API)
+export const cleanupExpiredStories = async (req, res) => {
+  try {
+    const deletedCount = await autoCleanupExpiredStories();
+
     res.status(200).json({
       success: true,
-      message: `Cleaned up ${result.deletedCount} expired stories`,
-      deletedCount: result.deletedCount
+      message: `Cleaned up ${deletedCount} expired stories`,
+      deletedCount
     });
 
   } catch (error) {
@@ -480,6 +496,38 @@ export const cleanupExpiredStories = async (req, res) => {
       message: "Internal server error while cleaning up expired stories",
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+  }
+};
+
+// Start automatic cleanup job (runs every hour)
+let cleanupInterval = null;
+
+export const startAutoCleanup = (intervalMinutes = 60) => {
+  // Stop existing interval if any
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+  }
+
+  // Run cleanup immediately on startup
+  autoCleanupExpiredStories();
+
+  // Run cleanup every hour (default) or specified interval
+  const intervalMs = intervalMinutes * 60 * 1000;
+  cleanupInterval = setInterval(() => {
+    autoCleanupExpiredStories();
+  }, intervalMs);
+
+  console.log(`🔄 Auto-cleanup started: Checking for expired stories every ${intervalMinutes} minutes`);
+  
+  return cleanupInterval;
+};
+
+// Stop automatic cleanup job
+export const stopAutoCleanup = () => {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+    console.log('🛑 Auto-cleanup stopped');
   }
 };
 

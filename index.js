@@ -10,6 +10,7 @@ import storyRouter from './routes/storyRoutes.js';
 import messageRouter from './routes/messageRoutes.js';
 import chatRouter from './routes/chatRoutes.js';
 import { initializeSocket, setSocketIO } from './config/socket.js';
+import { startAutoCleanup } from './controllers/storyController.js';
 
 dotenv.config();
 
@@ -46,6 +47,9 @@ const connectDB = async () => {
     
     await mongoose.connect(dbURI);
     console.log('✅ Connected to MongoDB successfully');
+    
+    // Start automatic story cleanup (runs every 60 minutes)
+    startAutoCleanup(60);
   } catch (error) {
     console.error('❌ MongoDB connection error:', error.message);
     process.exit(1);

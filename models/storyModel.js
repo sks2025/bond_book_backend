@@ -7,6 +7,10 @@ const storySchema = new mongoose.Schema({
   expiresAt: { type: Date, required: true },
 }, { timestamps: true });
 
+// TTL index - MongoDB will automatically delete documents after expiresAt
+// This runs every 60 seconds at the database level
+storySchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
 // Validation - at least one media file required
 storySchema.pre('validate', function(next) {
   if (!this.image && !this.video) {

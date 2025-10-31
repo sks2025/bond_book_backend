@@ -13,7 +13,8 @@ const userSchema = new mongoose.Schema({
   otp: { type: String },
   otpExpires: { type: Date },
   resetPasswordOTP: { type: String },
-  resetPasswordExpires: { type: Date }
+  resetPasswordExpires: { type: Date },
+  resetPasswordVerifiedUntil: { type: Date }
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);

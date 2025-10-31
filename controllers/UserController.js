@@ -1,4 +1,5 @@
 import User from '../models/userModel.js';
+import PendingUser from '../models/pendingUserModel.js';
 import Post from '../models/postModel.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -27,7 +28,7 @@ export async function register(request, response) {
       });
     }
 
-    // Check if user already exists
+    // Check if user already exists (finalized)
     const existingUser = await User.findOne({ 
       $or: [{ email: email.trim().toLowerCase() }, { username: username.trim() }] 
     });
@@ -39,23 +40,27 @@ export async function register(request, response) {
       });
     }
 
-    // Generate OTP for email verification
+    // Also ensure no pending registration for this email
+    const existingPending = await PendingUser.findOne({ email: email.trim().toLowerCase() });
+    if (existingPending) {
+      await PendingUser.deleteOne({ _id: existingPending._id }); // replace with new OTP request
+    }
+
+    // Generate OTP for email verification (pre-registration)
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
     
-    // Create new user
-    const user = new User({ 
-      username: username.trim(), 
-      email: email.trim().toLowerCase(), 
+    // Store as PendingUser until verified
+    await PendingUser.create({
+      username: username.trim(),
+      email: email.trim().toLowerCase(),
       password: hashedPassword,
-      otp: otp,
-      otpExpires: otpExpires
+      otp,
+      otpExpires
     });
-    
-    await user.save();
 
     // Send verification email
     try {
@@ -80,19 +85,9 @@ export async function register(request, response) {
       // Don't fail registration if email fails
     }
 
-    // Remove sensitive data from response
-    const userResponse = {
-      _id: user._id,
-      username: user.username,
-      email: user.email,
-      isVerified: user.isVerified,
-      createdAt: user.createdAt
-    };
-
-    return response.status(201).json({ 
+    return response.status(200).json({ 
       success: true, 
-      message: "User registered successfully. Please check your email for verification OTP.",
-      user: userResponse
+      message: "OTP sent to email. Complete verification to create your account."
     });
 
   } catch (error) {
@@ -117,24 +112,41 @@ export async function verifyOTP(request, response) {
       });
     }
 
-    const user = await User.findOne({ 
+    const pending = await PendingUser.findOne({ 
       email: email.trim().toLowerCase(),
       otp: otp,
       otpExpires: { $gt: new Date() }
     });
 
-    if (!user) {
+    if (!pending) {
       return response.status(400).json({
         success: false,
         message: "Invalid or expired OTP"
       });
     }
 
-    // Update user as verified and clear OTP
-    user.isVerified = true;
-    user.otp = undefined;
-    user.otpExpires = undefined;
-    await user.save();
+    // Before creating, ensure no existing user was created during window
+    const existingUser = await User.findOne({ 
+      $or: [{ email: pending.email }, { username: pending.username }] 
+    });
+    if (existingUser) {
+      await PendingUser.deleteOne({ _id: pending._id });
+      return response.status(409).json({
+        success: false,
+        message: "Account already exists for this email/username"
+      });
+    }
+
+    // Create the real user from pending
+    const user = await User.create({
+      username: pending.username,
+      email: pending.email,
+      password: pending.password,
+      isVerified: true
+    });
+
+    // Remove the pending record
+    await PendingUser.deleteOne({ _id: pending._id });
 
     // Send verification confirmation email
     try {
@@ -196,29 +208,24 @@ export async function resendOTP(request, response) {
       });
     }
 
-    const user = await User.findOne({ email: email.trim().toLowerCase() });
-    
-    if (!user) {
-      return response.status(404).json({
-        success: false,
-        message: "User not found"
-      });
-    }
-
-    if (user.isVerified) {
-      return response.status(400).json({
-        success: false,
-        message: "Email is already verified"
-      });
+    // Look up pending registration
+    const pending = await PendingUser.findOne({ email: email.trim().toLowerCase() });
+    if (!pending) {
+      // If no pending, check if already verified user exists
+      const existing = await User.findOne({ email: email.trim().toLowerCase() });
+      if (existing) {
+        return response.status(400).json({ success: false, message: "Email is already verified" });
+      }
+      return response.status(404).json({ success: false, message: "No pending registration found" });
     }
 
     // Generate new OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    user.otp = otp;
-    user.otpExpires = otpExpires;
-    await user.save();
+    pending.otp = otp;
+    pending.otpExpires = otpExpires;
+    await pending.save();
 
     // Send new OTP email
     try {
@@ -346,15 +353,33 @@ export const loginUser = async (req, res) => {
       // Don't fail login if email fails
     }
 
+    // Calculate followers and following counts
+    const followersCount = user.followers ? user.followers.length : 0;
+    const followingCount = user.following ? user.following.length : 0;
+
+    // Get posts count
+    let postsCount = user.postsCount || 0;
+    if (!user.postsCount || user.postsCount === undefined) {
+      postsCount = await Post.countDocuments({ user: user._id });
+      if (postsCount > 0) {
+        user.postsCount = postsCount;
+        await user.save();
+      }
+    }
+
     // Remove password from response
     const userResponse = {
       _id: user._id,
       username: user.username,
       email: user.email,
       profilePicture: user.profilePicture,
+      profilePictureUrl: getFileUrl(user.profilePicture, req),
       bio: user.bio,
       followers: user.followers,
       following: user.following,
+      followersCount: followersCount,
+      followingCount: followingCount,
+      postsCount: postsCount,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
     };
@@ -465,14 +490,14 @@ export const forgotPassword = async (req, res) => {
 };
 
 // Reset Password - Verify OTP and set new password
-export const resetPassword = async (req, res) => {
+export const resetPassword = async (req, res) => {  
   try {
-    const { email, otp, newPassword } = req.body;
+    const { email, newPassword, confirmPassword } = req.body;
 
-    if (!email || !otp || !newPassword) {
+    if (!email || !newPassword || !confirmPassword) {
       return res.status(400).json({
         success: false,
-        message: "Email, OTP and new password are required"
+        message: "Email, newPassword and confirmPassword are required"
       });
     }
 
@@ -493,27 +518,37 @@ export const resetPassword = async (req, res) => {
       });
     }
 
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "newPassword and confirmPassword do not match"
+      });
+    }
+
     // Find user with valid reset OTP
-    const user = await User.findOne({
-      email: email.trim().toLowerCase(),
-      resetPasswordOTP: otp,
-      resetPasswordExpires: { $gt: new Date() }
-    });
+    const user = await User.findOne({ email: email.trim().toLowerCase() });
 
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: "Invalid or expired OTP"
+        message: "User not found"
+      });
+    }
+
+    // Ensure OTP was verified recently
+    if (!user.resetPasswordVerifiedUntil || user.resetPasswordVerifiedUntil <= new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Reset OTP not verified or verification window expired"
       });
     }
 
     // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 12);
 
-    // Update password and clear reset OTP
+    // Update password and clear reset verification window
     user.password = hashedPassword;
-    user.resetPasswordOTP = undefined;
-    user.resetPasswordExpires = undefined;
+    user.resetPasswordVerifiedUntil = undefined;
     await user.save();
 
     // Send password reset confirmation email
@@ -554,6 +589,62 @@ export const resetPassword = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Internal server error during password reset"
+    });
+  }
+};
+
+// Verify reset OTP (without changing password)
+export const verifyResetOTP = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and OTP are required'
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address'
+      });
+    }
+
+    const user = await User.findOne({
+      email: email.trim().toLowerCase(),
+      resetPasswordOTP: otp,
+      resetPasswordExpires: { $gt: new Date() }
+    }).select('_id email username');
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired OTP'
+      });
+    }
+
+    // Mark OTP as verified for a short window and clear OTP
+    const verifyWindowMs = 15 * 60 * 1000; // 15 minutes
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: { resetPasswordVerifiedUntil: new Date(Date.now() + verifyWindowMs) },
+        $unset: { resetPasswordOTP: "", resetPasswordExpires: "" }
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully'
+    });
+  } catch (error) {
+    console.error('Verify reset OTP error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error during OTP verification'
     });
   }
 };
@@ -635,6 +726,20 @@ export const updateProfile = async (req, res) => {
       // Don't fail profile update if email fails
     }
 
+    // Calculate followers and following counts
+    const followersCount = user.followers ? user.followers.length : 0;
+    const followingCount = user.following ? user.following.length : 0;
+
+    // Get posts count
+    let postsCount = user.postsCount || 0;
+    if (!user.postsCount || user.postsCount === undefined) {
+      postsCount = await Post.countDocuments({ user: userId });
+      if (postsCount > 0) {
+        user.postsCount = postsCount;
+        await user.save();
+      }
+    }
+
     // Return updated user data (without password)
     const userResponse = {
       _id: user._id,
@@ -645,6 +750,9 @@ export const updateProfile = async (req, res) => {
       bio: user.bio,
       followers: user.followers,
       following: user.following,
+      followersCount: followersCount,
+      followingCount: followingCount,
+      postsCount: postsCount,
       isVerified: user.isVerified,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
@@ -709,6 +817,69 @@ export const uploadProfilePicture = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Internal server error during profile picture upload'
+    });
+  }
+};
+
+// Update Bio
+export const updateBio = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { bio } = req.body;
+
+    if (bio === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Bio is required'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Update bio
+    user.bio = bio || '';
+    await user.save();
+
+    // Calculate followers and following counts
+    const followersCount = user.followers ? user.followers.length : 0;
+    const followingCount = user.following ? user.following.length : 0;
+
+    // Get posts count
+    let postsCount = user.postsCount || 0;
+    if (!user.postsCount || user.postsCount === undefined) {
+      postsCount = await Post.countDocuments({ user: userId });
+      if (postsCount > 0) {
+        user.postsCount = postsCount;
+        await user.save();
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Bio updated successfully',
+      user: {
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+        bio: user.bio,
+        profilePicture: user.profilePicture,
+        profilePictureUrl: getFileUrl(user.profilePicture, req),
+        followersCount: followersCount,
+        followingCount: followingCount,
+        postsCount: postsCount
+      }
+    });
+  } catch (error) {
+    console.error('Update bio error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error during bio update'
     });
   }
 };
@@ -802,9 +973,15 @@ export const getCurrentUser = async (req, res) => {
       }
     }
 
+    // Calculate followers and following counts from arrays
+    const followersCount = user.followers ? user.followers.length : 0;
+    const followingCount = user.following ? user.following.length : 0;
+
     const userResponse = {
       ...user.toObject(),
       postsCount: postsCount,
+      followersCount: followersCount,
+      followingCount: followingCount,
       profilePictureUrl: getFileUrl(user.profilePicture, req)
     };
 
@@ -835,7 +1012,11 @@ export const followUser = async (req, res) => {
       });
     }
 
-    if (userId.toString() === followUserId.toString()) {
+    // Convert to string for consistent comparison
+    const currentUserIdStr = userId.toString();
+    const followUserIdStr = followUserId.toString();
+
+    if (currentUserIdStr === followUserIdStr) {
       return res.status(400).json({
         success: false,
         message: 'Cannot follow yourself'
@@ -858,8 +1039,12 @@ export const followUser = async (req, res) => {
       });
     }
 
-    // Check if already following
-    if (currentUser.following.includes(followUserId)) {
+    // Check if already following (convert to string for proper comparison)
+    const isAlreadyFollowing = currentUser.following.some(
+      id => id.toString() === followUserIdStr
+    );
+    
+    if (isAlreadyFollowing) {
       return res.status(400).json({
         success: false,
         message: 'Already following this user'
@@ -870,9 +1055,15 @@ export const followUser = async (req, res) => {
     currentUser.following.push(followUserId);
     await currentUser.save();
 
-    // Add to user's followers list
-    userToFollow.followers.push(userId);
-    await userToFollow.save();
+    // Add to user's followers list (only if not already in the list)
+    const isAlreadyFollower = userToFollow.followers.some(
+      id => id.toString() === currentUserIdStr
+    );
+    
+    if (!isAlreadyFollower) {
+      userToFollow.followers.push(userId);
+      await userToFollow.save();
+    }
 
     return res.status(200).json({
       success: true,
@@ -903,6 +1094,10 @@ export const unfollowUser = async (req, res) => {
       });
     }
 
+    // Convert to string for consistent comparison
+    const currentUserIdStr = userId.toString();
+    const unfollowUserIdStr = unfollowUserId.toString();
+
     const userToUnfollow = await User.findById(unfollowUserId);
     if (!userToUnfollow) {
       return res.status(404).json({
@@ -919,8 +1114,12 @@ export const unfollowUser = async (req, res) => {
       });
     }
 
-    // Check if currently following
-    if (!currentUser.following.includes(unfollowUserId)) {
+    // Check if currently following (convert to string for proper comparison)
+    const isCurrentlyFollowing = currentUser.following.some(
+      id => id.toString() === unfollowUserIdStr
+    );
+    
+    if (!isCurrentlyFollowing) {
       return res.status(400).json({
         success: false,
         message: 'Not following this user'
@@ -929,13 +1128,13 @@ export const unfollowUser = async (req, res) => {
 
     // Remove from following list
     currentUser.following = currentUser.following.filter(
-      id => id.toString() !== unfollowUserId.toString()
+      id => id.toString() !== unfollowUserIdStr
     );
     await currentUser.save();
 
     // Remove from user's followers list
     userToUnfollow.followers = userToUnfollow.followers.filter(
-      id => id.toString() !== userId.toString()
+      id => id.toString() !== currentUserIdStr
     );
     await userToUnfollow.save();
 
@@ -978,8 +1177,13 @@ export const checkConnection = async (req, res) => {
       });
     }
 
-    const isFollowing = currentUser.following.includes(otherUserId);
-    const isFollowedBy = otherUser.following.includes(userId);
+    // Convert to string for proper comparison with ObjectIds
+    const isFollowing = currentUser.following.some(
+      id => id.toString() === otherUserId.toString()
+    );
+    const isFollowedBy = otherUser.following.some(
+      id => id.toString() === userId.toString()
+    );
     const isConnected = isFollowing && isFollowedBy;
 
     return res.status(200).json({
