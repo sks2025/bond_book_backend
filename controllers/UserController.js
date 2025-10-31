@@ -1,6 +1,9 @@
 import User from '../models/userModel.js';
 import PendingUser from '../models/pendingUserModel.js';
 import Post from '../models/postModel.js';
+import FollowRequest from '../models/followRequestModel.js';
+import ChatConnection from '../models/chatConnectionModel.js';
+import ChatProfile from '../models/chatProfileModel.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import sendEmail from '../config/nodeMailer.js';
@@ -1147,6 +1150,299 @@ export const unfollowUser = async (req, res) => {
 
   } catch (error) {
     console.error('Unfollow user error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Send a follow request (toggle follow now sends a request)
+export const toggleFollow = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    // Support both 'userId' and 'followUserId' for backward compatibility
+    const followUserId = req.body.userId || req.body.followUserId;
+
+    if (!followUserId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+
+    // Convert to string for consistent comparison
+    const currentUserIdStr = userId.toString();
+    const followUserIdStr = followUserId.toString();
+
+    if (currentUserIdStr === followUserIdStr) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot send follow request to yourself'
+      });
+    }
+
+    const userToFollow = await User.findById(followUserId);
+    if (!userToFollow) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const currentUser = await User.findById(userId);
+    if (!currentUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'Current user not found'
+      });
+    }
+
+    // Check if already following
+    const isCurrentlyFollowing = currentUser.following.some(
+      id => id.toString() === followUserIdStr
+    );
+
+    if (isCurrentlyFollowing) {
+      // Unfollow: Remove from following list
+      currentUser.following = currentUser.following.filter(
+        id => id.toString() !== followUserIdStr
+      );
+      await currentUser.save();
+
+      // Remove from user's followers list
+      userToFollow.followers = userToFollow.followers.filter(
+        id => id.toString() !== currentUserIdStr
+      );
+      await userToFollow.save();
+
+      // Delete any pending follow request
+      await FollowRequest.findOneAndDelete({
+        requester: userId,
+        recipient: followUserId
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'User unfollowed successfully',
+        isFollowing: false,
+        following: currentUser.following.length,
+        followers: userToFollow.followers.length
+      });
+    }
+
+    // Check if already has a pending request
+    const existingRequest = await FollowRequest.findOne({
+      requester: userId,
+      recipient: followUserId
+    });
+
+    if (existingRequest) {
+      if (existingRequest.status === 'pending') {
+        return res.status(409).json({
+          success: false,
+          message: 'Follow request already sent',
+          request: existingRequest
+        });
+      } else if (existingRequest.status === 'accepted') {
+        return res.status(400).json({
+          success: false,
+          message: 'Already following this user'
+        });
+      }
+    }
+
+    // Create a new follow request
+    const request = await FollowRequest.create({
+      requester: userId,
+      recipient: followUserId
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Follow request sent successfully',
+      request: request
+    });
+
+  } catch (error) {
+    console.error('Send follow request error:', error);
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: 'Follow request already exists'
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// List follow requests (incoming and outgoing)
+export const listFollowRequests = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const incoming = await FollowRequest.find({ recipient: userId, status: 'pending' })
+      .populate('requester', 'username profilePicture email')
+      .sort({ createdAt: -1 });
+
+    const outgoing = await FollowRequest.find({ requester: userId, status: 'pending' })
+      .populate('recipient', 'username profilePicture email')
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      incoming,
+      outgoing
+    });
+  } catch (error) {
+    console.error('List follow requests error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Accept a follow request
+export const acceptFollowRequest = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { requestId } = req.params;
+
+    const request = await FollowRequest.findById(requestId);
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Follow request not found'
+      });
+    }
+
+    if (request.recipient.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to accept this request'
+      });
+    }
+
+    if (request.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `Request already ${request.status}`
+      });
+    }
+
+    const requester = await User.findById(request.requester);
+    const recipient = await User.findById(request.recipient);
+
+    if (!requester || !recipient) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Update follow relationship
+    const requesterIdStr = request.requester.toString();
+    const recipientIdStr = request.recipient.toString();
+
+    // Add to requester's following list
+    const isAlreadyFollowing = requester.following.some(
+      id => id.toString() === recipientIdStr
+    );
+    if (!isAlreadyFollowing) {
+      requester.following.push(request.recipient);
+      await requester.save();
+    }
+
+    // Add to recipient's followers list
+    const isAlreadyFollower = recipient.followers.some(
+      id => id.toString() === requesterIdStr
+    );
+    if (!isAlreadyFollower) {
+      recipient.followers.push(request.requester);
+      await recipient.save();
+    }
+
+    // Update request status
+    request.status = 'accepted';
+    await request.save();
+
+    // Create chat connection
+    const usersPair = [request.requester.toString(), request.recipient.toString()].sort();
+    const connection = await ChatConnection.findOneAndUpdate(
+      { users: usersPair },
+      { $setOnInsert: { users: usersPair } },
+      { upsert: true, new: true }
+    );
+
+    // Create chat profile if not exists
+    const existingProfile = await ChatProfile.findOne({ connection: connection._id });
+    if (!existingProfile) {
+      const bothUsers = await User.find({ _id: { $in: usersPair } }, 'username');
+      const names = bothUsers.map(u => u.username).sort((a, b) => a.localeCompare(b));
+      const title = `${names[0]} & ${names[1]}`;
+      await ChatProfile.create({ connection: connection._id, users: usersPair, title });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Follow request accepted. Chat connection created.',
+      isFollowing: true,
+      following: requester.following.length,
+      followers: recipient.followers.length
+    });
+
+  } catch (error) {
+    console.error('Accept follow request error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Reject a follow request
+export const rejectFollowRequest = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { requestId } = req.params;
+
+    const request = await FollowRequest.findById(requestId);
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Follow request not found'
+      });
+    }
+
+    if (request.recipient.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to reject this request'
+      });
+    }
+
+    if (request.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `Request already ${request.status}`
+      });
+    }
+
+    request.status = 'rejected';
+    await request.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Follow request rejected'
+    });
+
+  } catch (error) {
+    console.error('Reject follow request error:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error'

@@ -13,8 +13,10 @@ import {
   logoutUser,
   uploadProfilePicture,
   updateBio,
-  followUser,
-  unfollowUser,
+  toggleFollow,
+  listFollowRequests,
+  acceptFollowRequest,
+  rejectFollowRequest,
   checkConnection
 } from '../controllers/UserController.js';
 import userAuth from '../middleware/userAuth.js';
@@ -42,8 +44,10 @@ userRouter.put('/bio', userAuth, updateBio);
 userRouter.delete('/delete-profile', userAuth, deleteProfile);
 
 // Follow/Unfollow routes (must be before any /:id routes to avoid conflicts)
-userRouter.post('/follow', userAuth, followUser);
-userRouter.post('/unfollow', userAuth, unfollowUser);
+userRouter.post('/toggle-follow', userAuth, toggleFollow);
+userRouter.get('/follow-requests', userAuth, listFollowRequests);
+userRouter.post('/follow-requests/:requestId/accept', userAuth, acceptFollowRequest);
+userRouter.post('/follow-requests/:requestId/reject', userAuth, rejectFollowRequest);
 userRouter.get('/connection/:otherUserId', userAuth, checkConnection);
 
 export default userRouter;

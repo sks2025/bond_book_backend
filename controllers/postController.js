@@ -77,20 +77,23 @@ export const getAllPosts = async (req, res) => {
         };
       }
       
-      // Format comments with user details
+      // Format comments with user details (flattened)
       if (postObj.comments && Array.isArray(postObj.comments)) {
         postObj.comments = postObj.comments.map(comment => {
           const user = comment.user;
-          return {
+          const baseComment = {
             _id: comment._id,
             comment: comment.comment,
-            createdAt: comment.createdAt,
-            user: user && typeof user === 'object' ? {
-              _id: user._id,
-              username: user.username,
-              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
-            } : null
+            createdAt: comment.createdAt
           };
+          
+          if (user && typeof user === 'object') {
+            baseComment.userId = user._id;
+            baseComment.username = user.username;
+            baseComment.profilePictureUrl = user.profilePicture ? getFileUrl(user.profilePicture, req) : null;
+          }
+          
+          return baseComment;
         });
       }
       
@@ -112,9 +115,10 @@ export const getAllPosts = async (req, res) => {
 export const getPostById = async (req, res) => {
   try {
     const { id } = req.params;
+    const currentUserId = req.user?.userId; // Optional - may not be authenticated
     
     const post = await Post.findById(id)
-      .populate('user', 'username profilePicture')
+      .populate('user', 'username profilePicture bio')
       .populate('comments.user', 'username profilePicture');
     
     if (!post) {
@@ -124,11 +128,99 @@ export const getPostById = async (req, res) => {
     // Increment view count
     await Post.findByIdAndUpdate(id, { $inc: { viewCount: 1 } });
     
-    // Add URLs to the post
+    // Get full user profile
+    const postUserId = post.user._id || post.user;
+    const user = await User.findById(postUserId).select('username email profilePicture bio followers following postsCount isVerified createdAt');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'Post author not found' });
+    }
+
+    // Get all posts by this user
+    const allUserPosts = await Post.find({ user: postUserId })
+      .populate('user', 'username profilePicture')
+      .sort({ createdAt: -1 });
+    
+    // Format all user posts with URLs
+    const userPostsFormatted = allUserPosts.map(p => {
+      const pObj = p.toObject ? p.toObject() : p;
+      const pWithUrls = addUrlsToPost(p, req);
+      const final = pWithUrls.toObject ? pWithUrls.toObject() : pWithUrls;
+      
+      if (final.user) {
+        final.user = {
+          _id: final.user._id,
+          username: final.user.username,
+          profilePictureUrl: final.user.profilePicture ? getFileUrl(final.user.profilePicture, req) : null
+        };
+      }
+      
+      if (final.comments && Array.isArray(final.comments)) {
+        final.comments = final.comments.map(comment => {
+          const commentUser = comment.user;
+          const baseComment = {
+            _id: comment._id,
+            comment: comment.comment,
+            createdAt: comment.createdAt
+          };
+          
+          if (commentUser && typeof commentUser === 'object') {
+            baseComment.userId = commentUser._id;
+            baseComment.username = commentUser.username;
+            baseComment.profilePictureUrl = commentUser.profilePicture ? getFileUrl(commentUser.profilePicture, req) : null;
+          }
+          
+          return baseComment;
+        });
+      }
+      
+      return final;
+    });
+    
+    // Check follow status if user is authenticated
+    let isFollowing = false;
+    let isFollowedBy = false;
+    if (currentUserId) {
+      const currentUser = await User.findById(currentUserId).select('following');
+      if (currentUser) {
+        isFollowing = currentUser.following.some(
+          fid => fid.toString() === postUserId.toString()
+        );
+        isFollowedBy = user.following.some(
+          fid => fid.toString() === currentUserId.toString()
+        );
+      }
+    }
+    
+    // Calculate counts
+    const followersCount = user.followers ? user.followers.length : 0;
+    const followingCount = user.following ? user.following.length : 0;
+    const postsCount = user.postsCount || userPostsFormatted.length;
+    
+    // Format user profile
+    const userProfile = {
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      bio: user.bio || '',
+      profilePicture: user.profilePicture || '',
+      profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null,
+      followersCount,
+      followingCount,
+      postsCount,
+      isVerified: user.isVerified || false,
+      createdAt: user.createdAt,
+      // Follow/unfollow information
+      isFollowing,
+      isFollowedBy,
+      isConnected: isFollowing && isFollowedBy
+    };
+    
+    // Add URLs to the current post
     const postWithUrls = addUrlsToPost(post, req);
     const postObj = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
     
-    // Format user object with _id
+    // Format post user object with _id
     if (postObj.user) {
       postObj.user = {
         _id: postObj.user._id,
@@ -137,26 +229,32 @@ export const getPostById = async (req, res) => {
       };
     }
     
-    // Format comments with user details
+    // Format comments with user details (flattened)
     if (postObj.comments && Array.isArray(postObj.comments)) {
       postObj.comments = postObj.comments.map(comment => {
-        const user = comment.user;
-        return {
+        const commentUser = comment.user;
+        const baseComment = {
           _id: comment._id,
           comment: comment.comment,
-          createdAt: comment.createdAt,
-          user: user && typeof user === 'object' ? {
-            _id: user._id,
-            username: user.username,
-            profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
-          } : null
+          createdAt: comment.createdAt
         };
+        
+        if (commentUser && typeof commentUser === 'object') {
+          baseComment.userId = commentUser._id;
+          baseComment.username = commentUser.username;
+          baseComment.profilePictureUrl = commentUser.profilePicture ? getFileUrl(commentUser.profilePicture, req) : null;
+        }
+        
+        return baseComment;
       });
     }
     
     res.status(200).json({
       message: 'Post retrieved successfully',
-      post: postObj
+      post: postObj,
+      userProfile,
+      userPosts: userPostsFormatted,
+      postsCount: userPostsFormatted.length
     });
   } catch (error) {
     console.error('Error getting post:', error);
@@ -636,19 +734,22 @@ export const getPostComments = async (req, res) => {
       return res.status(404).json({ message: 'Post not found' });
     }
 
-    // Format comments with user details
+    // Format comments with user details (flattened)
     const comments = (post.comments || []).map(comment => {
       const user = comment.user;
-      return {
+      const baseComment = {
         _id: comment._id,
         comment: comment.comment,
-        createdAt: comment.createdAt,
-        user: user && typeof user === 'object' ? {
-          _id: user._id,
-          username: user.username,
-          profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
-        } : null
+        createdAt: comment.createdAt
       };
+      
+      if (user && typeof user === 'object') {
+        baseComment.userId = user._id;
+        baseComment.username = user.username;
+        baseComment.profilePictureUrl = user.profilePicture ? getFileUrl(user.profilePicture, req) : null;
+      }
+      
+      return baseComment;
     });
 
     res.status(200).json({
