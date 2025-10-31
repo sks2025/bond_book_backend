@@ -6,6 +6,7 @@ import {
     updatePost,
     deletePost,
     getPostsByUser,
+    getUserProfileByUserId,
     getMyPosts,
     getPostsByTags,
     togglePostLike,
@@ -34,6 +35,9 @@ router.post('/search', searchPosts);
 
 // Get posts for the logged-in user (must be before /:id route)
 router.get('/me', userAuth, getMyPosts);
+
+// Get user profile by user ID (with all posts and follow info) - must be before /user/:userId
+router.get('/user/:userId/profile', getUserProfileByUserId);
 
 // Get posts by user
 router.get('/user/:userId', getPostsByUser);

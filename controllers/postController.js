@@ -111,12 +111,20 @@ export const getAllPosts = async (req, res) => {
   }
 };
 
-// Get post by ID
+// Get post by ID (or user profile if ID is a user ID)
 export const getPostById = async (req, res) => {
   try {
     const { id } = req.params;
     const currentUserId = req.user?.userId; // Optional - may not be authenticated
     
+    // First check if it's a valid user ID
+    const userCheck = await User.findById(id);
+    if (userCheck) {
+      // It's a user ID, return user profile
+      return await getUserProfileByUserId({ params: { userId: id }, user: req.user }, res);
+    }
+    
+    // If not a user, treat it as a post ID
     const post = await Post.findById(id)
       .populate('user', 'username profilePicture bio')
       .populate('comments.user', 'username profilePicture');
@@ -326,6 +334,112 @@ export const deletePost = async (req, res) => {
     });
   } catch (error) {
     console.error('Error deleting post:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Get user profile by user ID (with all posts and follow info)
+export const getUserProfileByUserId = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user?.userId; // Optional - may not be authenticated
+    
+    // Get full user profile
+    const user = await User.findById(userId).select('username email profilePicture bio followers following postsCount isVerified createdAt');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Get all posts by this user
+    const allUserPosts = await Post.find({ user: userId })
+      .populate('user', 'username profilePicture')
+      .populate('comments.user', 'username profilePicture')
+      .sort({ createdAt: -1 });
+    
+    // Format all user posts with URLs
+    const userPostsFormatted = allUserPosts.map(p => {
+      const pObj = p.toObject ? p.toObject() : p;
+      const pWithUrls = addUrlsToPost(p, req);
+      const final = pWithUrls.toObject ? pWithUrls.toObject() : pWithUrls;
+      
+      if (final.user) {
+        final.user = {
+          _id: final.user._id,
+          username: final.user.username,
+          profilePictureUrl: final.user.profilePicture ? getFileUrl(final.user.profilePicture, req) : null
+        };
+      }
+      
+      if (final.comments && Array.isArray(final.comments)) {
+        final.comments = final.comments.map(comment => {
+          const commentUser = comment.user;
+          const baseComment = {
+            _id: comment._id,
+            comment: comment.comment,
+            createdAt: comment.createdAt
+          };
+          
+          if (commentUser && typeof commentUser === 'object') {
+            baseComment.userId = commentUser._id;
+            baseComment.username = commentUser.username;
+            baseComment.profilePictureUrl = commentUser.profilePicture ? getFileUrl(commentUser.profilePicture, req) : null;
+          }
+          
+          return baseComment;
+        });
+      }
+      
+      return final;
+    });
+    
+    // Check follow status if user is authenticated
+    let isFollowing = false;
+    let isFollowedBy = false;
+    if (currentUserId) {
+      const currentUser = await User.findById(currentUserId).select('following');
+      if (currentUser) {
+        isFollowing = currentUser.following.some(
+          fid => fid.toString() === userId.toString()
+        );
+        isFollowedBy = user.following.some(
+          fid => fid.toString() === currentUserId.toString()
+        );
+      }
+    }
+    
+    // Calculate counts
+    const followersCount = user.followers ? user.followers.length : 0;
+    const followingCount = user.following ? user.following.length : 0;
+    const postsCount = user.postsCount || userPostsFormatted.length;
+    
+    // Format user profile
+    const userProfile = {
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      bio: user.bio || '',
+      profilePicture: user.profilePicture || '',
+      profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null,
+      followersCount,
+      followingCount,
+      postsCount,
+      isVerified: user.isVerified || false,
+      createdAt: user.createdAt,
+      // Follow/unfollow information
+      isFollowing,
+      isFollowedBy,
+      isConnected: isFollowing && isFollowedBy
+    };
+    
+    res.status(200).json({
+      message: 'User profile retrieved successfully',
+      userProfile,
+      userPosts: userPostsFormatted,
+      postsCount: userPostsFormatted.length
+    });
+  } catch (error) {
+    console.error('Error getting user profile:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
