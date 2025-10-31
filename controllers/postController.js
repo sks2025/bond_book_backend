@@ -53,6 +53,7 @@ export const getAllPosts = async (req, res) => {
   try {
     const posts = await Post.find()
       .populate('user', 'username profilePicture')
+      .populate('comments.user', 'username profilePicture')
       .sort({ createdAt: -1 });
     
     // Add URLs to all posts and user profile pictures
@@ -67,12 +68,30 @@ export const getAllPosts = async (req, res) => {
         postObj.videoUrl = getFileUrl(postObj.video, req);
       }
       
-      // Only include username and profilePictureUrl in user object
+      // Format user object with _id
       if (postObj.user) {
         postObj.user = {
+          _id: postObj.user._id,
           username: postObj.user.username,
           profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
         };
+      }
+      
+      // Format comments with user details
+      if (postObj.comments && Array.isArray(postObj.comments)) {
+        postObj.comments = postObj.comments.map(comment => {
+          const user = comment.user;
+          return {
+            _id: comment._id,
+            comment: comment.comment,
+            createdAt: comment.createdAt,
+            user: user && typeof user === 'object' ? {
+              _id: user._id,
+              username: user.username,
+              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+            } : null
+          };
+        });
       }
       
       return postObj;
@@ -95,7 +114,8 @@ export const getPostById = async (req, res) => {
     const { id } = req.params;
     
     const post = await Post.findById(id)
-      .populate('user', 'name email profilePicture');
+      .populate('user', 'username profilePicture')
+      .populate('comments.user', 'username profilePicture');
     
     if (!post) {
       return res.status(404).json({ message: 'Post not found' });
@@ -106,10 +126,37 @@ export const getPostById = async (req, res) => {
     
     // Add URLs to the post
     const postWithUrls = addUrlsToPost(post, req);
+    const postObj = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+    
+    // Format user object with _id
+    if (postObj.user) {
+      postObj.user = {
+        _id: postObj.user._id,
+        username: postObj.user.username,
+        profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+      };
+    }
+    
+    // Format comments with user details
+    if (postObj.comments && Array.isArray(postObj.comments)) {
+      postObj.comments = postObj.comments.map(comment => {
+        const user = comment.user;
+        return {
+          _id: comment._id,
+          comment: comment.comment,
+          createdAt: comment.createdAt,
+          user: user && typeof user === 'object' ? {
+            _id: user._id,
+            username: user.username,
+            profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+          } : null
+        };
+      });
+    }
     
     res.status(200).json({
       message: 'Post retrieved successfully',
-      post: postWithUrls
+      post: postObj
     });
   } catch (error) {
     console.error('Error getting post:', error);
@@ -192,18 +239,42 @@ export const getPostsByUser = async (req, res) => {
     
     const posts = await Post.find({ user: userId })
       .populate('user', 'username profilePicture')
+      .populate('comments.user', 'username profilePicture')
       .sort({ createdAt: -1 });
     
-    // Add URLs and trim user info
+    // Add URLs and format user info
     const postsWithUrls = posts.map(post => {
-      const postObj = addUrlsToPost(post, req);
-      if (postObj.user) {
-        postObj.user = {
-          username: postObj.user.username,
-          profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+      const postObj = post.toObject ? post.toObject() : post;
+      const postWithUrls = addUrlsToPost(post, req);
+      const finalPost = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+      
+      // Format user object with _id
+      if (finalPost.user) {
+        finalPost.user = {
+          _id: finalPost.user._id,
+          username: finalPost.user.username,
+          profilePictureUrl: finalPost.user.profilePicture ? getFileUrl(finalPost.user.profilePicture, req) : null
         };
       }
-      return postObj;
+      
+      // Format comments with user details
+      if (finalPost.comments && Array.isArray(finalPost.comments)) {
+        finalPost.comments = finalPost.comments.map(comment => {
+          const user = comment.user;
+          return {
+            _id: comment._id,
+            comment: comment.comment,
+            createdAt: comment.createdAt,
+            user: user && typeof user === 'object' ? {
+              _id: user._id,
+              username: user.username,
+              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+            } : null
+          };
+        });
+      }
+      
+      return finalPost;
     });
     
     res.status(200).json({
@@ -223,17 +294,41 @@ export const getMyPosts = async (req, res) => {
     const userId = req.user.userId;
     const posts = await Post.find({ user: userId })
       .populate('user', 'username profilePicture')
+      .populate('comments.user', 'username profilePicture')
       .sort({ createdAt: -1 });
 
     const postsWithUrls = posts.map(post => {
-      const postObj = addUrlsToPost(post, req);
-      if (postObj.user) {
-        postObj.user = {
-          username: postObj.user.username,
-          profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+      const postObj = post.toObject ? post.toObject() : post;
+      const postWithUrls = addUrlsToPost(post, req);
+      const finalPost = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+      
+      // Format user object with _id
+      if (finalPost.user) {
+        finalPost.user = {
+          _id: finalPost.user._id,
+          username: finalPost.user.username,
+          profilePictureUrl: finalPost.user.profilePicture ? getFileUrl(finalPost.user.profilePicture, req) : null
         };
       }
-      return postObj;
+      
+      // Format comments with user details
+      if (finalPost.comments && Array.isArray(finalPost.comments)) {
+        finalPost.comments = finalPost.comments.map(comment => {
+          const user = comment.user;
+          return {
+            _id: comment._id,
+            comment: comment.comment,
+            createdAt: comment.createdAt,
+            user: user && typeof user === 'object' ? {
+              _id: user._id,
+              username: user.username,
+              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+            } : null
+          };
+        });
+      }
+      
+      return finalPost;
     });
 
     res.status(200).json({
@@ -277,11 +372,44 @@ export const getPostsByTags = async (req, res) => {
     const { tag } = req.params;
     
     const posts = await Post.find({ tags: { $in: [tag] } })
-      .populate('user', 'name email profilePicture')
+      .populate('user', 'username profilePicture')
+      .populate('comments.user', 'username profilePicture')
       .sort({ createdAt: -1 });
     
-    // Add URLs to all posts
-    const postsWithUrls = addUrlsToPosts(posts, req);
+    // Add URLs and format user info
+    const postsWithUrls = posts.map(post => {
+      const postObj = post.toObject ? post.toObject() : post;
+      const postWithUrls = addUrlsToPost(post, req);
+      const finalPost = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+      
+      // Format user object with _id
+      if (finalPost.user) {
+        finalPost.user = {
+          _id: finalPost.user._id,
+          username: finalPost.user.username,
+          profilePictureUrl: finalPost.user.profilePicture ? getFileUrl(finalPost.user.profilePicture, req) : null
+        };
+      }
+      
+      // Format comments with user details
+      if (finalPost.comments && Array.isArray(finalPost.comments)) {
+        finalPost.comments = finalPost.comments.map(comment => {
+          const user = comment.user;
+          return {
+            _id: comment._id,
+            comment: comment.comment,
+            createdAt: comment.createdAt,
+            user: user && typeof user === 'object' ? {
+              _id: user._id,
+              username: user.username,
+              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+            } : null
+          };
+        });
+      }
+      
+      return finalPost;
+    });
     
     res.status(200).json({
       message: 'Posts with tag retrieved successfully',
@@ -361,17 +489,41 @@ export const searchPosts = async (req, res) => {
     const filter = { $or: orFilters };
     const posts = await Post.find(filter)
       .populate('user', 'username profilePicture')
+      .populate('comments.user', 'username profilePicture')
       .sort({ createdAt: -1 });
 
     const postsWithUrls = posts.map(post => {
-      const postObj = addUrlsToPost(post, req);
-      if (postObj.user) {
-        postObj.user = {
-          username: postObj.user.username,
-          profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+      const postObj = post.toObject ? post.toObject() : post;
+      const postWithUrls = addUrlsToPost(post, req);
+      const finalPost = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+      
+      // Format user object with _id
+      if (finalPost.user) {
+        finalPost.user = {
+          _id: finalPost.user._id,
+          username: finalPost.user.username,
+          profilePictureUrl: finalPost.user.profilePicture ? getFileUrl(finalPost.user.profilePicture, req) : null
         };
       }
-      return postObj;
+      
+      // Format comments with user details
+      if (finalPost.comments && Array.isArray(finalPost.comments)) {
+        finalPost.comments = finalPost.comments.map(comment => {
+          const user = comment.user;
+          return {
+            _id: comment._id,
+            comment: comment.comment,
+            createdAt: comment.createdAt,
+            user: user && typeof user === 'object' ? {
+              _id: user._id,
+              username: user.username,
+              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+            } : null
+          };
+        });
+      }
+      
+      return finalPost;
     });
 
     res.status(200).json({
@@ -478,15 +630,30 @@ export const getPostComments = async (req, res) => {
     const { id } = req.params;
 
     const post = await Post.findById(id)
-      .populate('comments.user', 'name email profilePicture');
+      .populate('comments.user', 'username profilePicture');
 
     if (!post) {
       return res.status(404).json({ message: 'Post not found' });
     }
 
+    // Format comments with user details
+    const comments = (post.comments || []).map(comment => {
+      const user = comment.user;
+      return {
+        _id: comment._id,
+        comment: comment.comment,
+        createdAt: comment.createdAt,
+        user: user && typeof user === 'object' ? {
+          _id: user._id,
+          username: user.username,
+          profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+        } : null
+      };
+    });
+
     res.status(200).json({
       message: 'Comments retrieved successfully',
-      comments: post.comments,
+      comments,
       commentCount: post.commentCount
     });
   } catch (error) {
