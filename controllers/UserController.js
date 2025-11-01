@@ -1191,11 +1191,18 @@ export const toggleFollow = async (req, res) => {
       });
     }
 
-    // Check if already following
+    // Check if already has a follow request
+    const existingRequest = await FollowRequest.findOne({
+      requester: userId,
+      recipient: followUserId
+    });
+
+    // Check if already following (verify actual following status)
     const isCurrentlyFollowing = currentUser.following.some(
       id => id.toString() === followUserIdStr
     );
 
+    // If already following, allow unfollow
     if (isCurrentlyFollowing) {
       // Unfollow: Remove from following list
       currentUser.following = currentUser.following.filter(
@@ -1209,11 +1216,13 @@ export const toggleFollow = async (req, res) => {
       );
       await userToFollow.save();
 
-      // Delete any pending follow request
-      await FollowRequest.findOneAndDelete({
-        requester: userId,
-        recipient: followUserId
-      });
+      // Delete any follow request (pending or accepted) to clean up
+      if (existingRequest) {
+        await FollowRequest.findOneAndDelete({
+          requester: userId,
+          recipient: followUserId
+        });
+      }
 
       return res.status(200).json({
         success: true,
@@ -1224,12 +1233,7 @@ export const toggleFollow = async (req, res) => {
       });
     }
 
-    // Check if already has a pending request
-    const existingRequest = await FollowRequest.findOne({
-      requester: userId,
-      recipient: followUserId
-    });
-
+    // If not following, check existing request status
     if (existingRequest) {
       if (existingRequest.status === 'pending') {
         return res.status(409).json({
@@ -1238,10 +1242,20 @@ export const toggleFollow = async (req, res) => {
           request: existingRequest
         });
       } else if (existingRequest.status === 'accepted') {
-        return res.status(400).json({
-          success: false,
-          message: 'Already following this user'
+        // If request is accepted but user is not in following list, there's data inconsistency
+        // Clean it up and allow sending a new request
+        await FollowRequest.findOneAndDelete({
+          requester: userId,
+          recipient: followUserId
         });
+        // Continue to create new request below
+      } else if (existingRequest.status === 'rejected') {
+        // If rejected, delete the old request and allow sending a new one
+        await FollowRequest.findOneAndDelete({
+          requester: userId,
+          recipient: followUserId
+        });
+        // Continue to create new request below
       }
     }
 
@@ -1341,7 +1355,7 @@ export const acceptFollowRequest = async (req, res) => {
     const requesterIdStr = request.requester.toString();
     const recipientIdStr = request.recipient.toString();
 
-    // Add to requester's following list
+    // Add to requester's following list (if not already following)
     const isAlreadyFollowing = requester.following.some(
       id => id.toString() === recipientIdStr
     );
@@ -1350,7 +1364,7 @@ export const acceptFollowRequest = async (req, res) => {
       await requester.save();
     }
 
-    // Add to recipient's followers list
+    // Add to recipient's followers list (if not already a follower)
     const isAlreadyFollower = recipient.followers.some(
       id => id.toString() === requesterIdStr
     );
@@ -1359,7 +1373,7 @@ export const acceptFollowRequest = async (req, res) => {
       await recipient.save();
     }
 
-    // Update request status
+    // Update request status to accepted
     request.status = 'accepted';
     await request.save();
 
