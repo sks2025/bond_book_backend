@@ -1,6 +1,5 @@
 import Post from '../models/postModel.js';
 import User from '../models/userModel.js';
-import { addUrlsToPost, addUrlsToPosts, getFileUrl } from '../utils/urlHelper.js';
 
 // Create a new post
 export const createPost = async (req, res) => {
@@ -34,13 +33,10 @@ export const createPost = async (req, res) => {
     const newPost = new Post(postData);
     const savedPost = await newPost.save();
 
-    // Add URLs to the response
-    const postWithUrls = addUrlsToPost(savedPost, req);
-
     res.status(201).json({
       success: true,
       message: "Post created successfully",
-      post: postWithUrls
+      post: savedPost
     });
   } catch (error) {
     console.error("Error creating post:", error);
@@ -56,24 +52,16 @@ export const getAllPosts = async (req, res) => {
       .populate('comments.user', 'username profilePicture')
       .sort({ createdAt: -1 });
     
-    // Add URLs to all posts and user profile pictures
+    // Format posts and user info
     const postsWithUrls = posts.map(post => {
       const postObj = post.toObject ? post.toObject() : post;
-      
-      // Add post media URLs
-      if (postObj.image) {
-        postObj.imageUrl = getFileUrl(postObj.image, req);
-      }
-      if (postObj.video) {
-        postObj.videoUrl = getFileUrl(postObj.video, req);
-      }
       
       // Format user object with _id
       if (postObj.user) {
         postObj.user = {
           _id: postObj.user._id,
           username: postObj.user.username,
-          profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+          profilePicture: postObj.user.profilePicture || null
         };
       }
       
@@ -90,7 +78,7 @@ export const getAllPosts = async (req, res) => {
           if (user && typeof user === 'object') {
             baseComment.userId = user._id;
             baseComment.username = user.username;
-            baseComment.profilePictureUrl = user.profilePicture ? getFileUrl(user.profilePicture, req) : null;
+            baseComment.profilePicture = user.profilePicture || null;
           }
           
           return baseComment;
@@ -136,17 +124,16 @@ export const getPostById = async (req, res) => {
         .populate('comments.user', 'username profilePicture')
         .sort({ createdAt: -1 });
       
-      // Format all user posts with URLs
+      // Format all user posts
       const userPostsFormatted = allUserPosts.map(p => {
         const pObj = p.toObject ? p.toObject() : p;
-        const pWithUrls = addUrlsToPost(p, req);
-        const final = pWithUrls.toObject ? pWithUrls.toObject() : pWithUrls;
+        const final = p.toObject ? p.toObject() : p;
         
         if (final.user) {
           final.user = {
             _id: final.user._id,
             username: final.user.username,
-            profilePictureUrl: final.user.profilePicture ? getFileUrl(final.user.profilePicture, req) : null
+            profilePicture: final.user.profilePicture || null
           };
         }
         
@@ -162,7 +149,7 @@ export const getPostById = async (req, res) => {
             if (commentUser && typeof commentUser === 'object') {
               baseComment.userId = commentUser._id;
               baseComment.username = commentUser.username;
-              baseComment.profilePictureUrl = commentUser.profilePicture ? getFileUrl(commentUser.profilePicture, req) : null;
+              baseComment.profilePicture = commentUser.profilePicture || null;
             }
             
             return baseComment;
@@ -199,7 +186,7 @@ export const getPostById = async (req, res) => {
         email: user.email,
         bio: user.bio || '',
         profilePicture: user.profilePicture || '',
-        profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null,
+        profilePicture: user.profilePicture || null,
         followersCount,
         followingCount,
         postsCount,
@@ -247,14 +234,13 @@ export const getPostById = async (req, res) => {
     // Format all user posts with URLs
     const userPostsFormatted = allUserPosts.map(p => {
       const pObj = p.toObject ? p.toObject() : p;
-      const pWithUrls = addUrlsToPost(p, req);
-      const final = pWithUrls.toObject ? pWithUrls.toObject() : pWithUrls;
+      const final = p.toObject ? p.toObject() : p;
       
       if (final.user) {
         final.user = {
           _id: final.user._id,
           username: final.user.username,
-          profilePictureUrl: final.user.profilePicture ? getFileUrl(final.user.profilePicture, req) : null
+          profilePicture: final.user.profilePicture || null
         };
       }
       
@@ -270,7 +256,7 @@ export const getPostById = async (req, res) => {
           if (commentUser && typeof commentUser === 'object') {
             baseComment.userId = commentUser._id;
             baseComment.username = commentUser.username;
-            baseComment.profilePictureUrl = commentUser.profilePicture ? getFileUrl(commentUser.profilePicture, req) : null;
+            baseComment.profilePicture = commentUser.profilePicture || null;
           }
           
           return baseComment;
@@ -307,7 +293,7 @@ export const getPostById = async (req, res) => {
       email: user.email,
       bio: user.bio || '',
       profilePicture: user.profilePicture || '',
-      profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null,
+      profilePicture: user.profilePicture || null,
       followersCount,
       followingCount,
       postsCount,
@@ -320,15 +306,14 @@ export const getPostById = async (req, res) => {
     };
     
     // Add URLs to the current post
-    const postWithUrls = addUrlsToPost(post, req);
-    const postObj = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+    const postObj = post.toObject ? post.toObject() : post;
     
     // Format post user object with _id
     if (postObj.user) {
       postObj.user = {
         _id: postObj.user._id,
         username: postObj.user.username,
-        profilePictureUrl: postObj.user.profilePicture ? getFileUrl(postObj.user.profilePicture, req) : null
+          profilePicture: postObj.user.profilePicture || null
       };
     }
     
@@ -345,7 +330,7 @@ export const getPostById = async (req, res) => {
         if (commentUser && typeof commentUser === 'object') {
           baseComment.userId = commentUser._id;
           baseComment.username = commentUser.username;
-          baseComment.profilePictureUrl = commentUser.profilePicture ? getFileUrl(commentUser.profilePicture, req) : null;
+          baseComment.profilePicture = commentUser.profilePicture || null;
         }
         
         return baseComment;
@@ -393,12 +378,9 @@ export const updatePost = async (req, res) => {
       { new: true }
     ).populate('user', 'name email profilePicture');
 
-    // Add URLs to the updated post
-    const postWithUrls = addUrlsToPost(updatedPost, req);
-
     res.status(200).json({
       message: 'Post updated successfully',
-      post: postWithUrls
+      post: updatedPost
     });
   } catch (error) {
     console.error('Error updating post:', error);
@@ -455,14 +437,13 @@ export const getUserProfileByUserId = async (req, res) => {
     // Format all user posts with URLs
     const userPostsFormatted = allUserPosts.map(p => {
       const pObj = p.toObject ? p.toObject() : p;
-      const pWithUrls = addUrlsToPost(p, req);
-      const final = pWithUrls.toObject ? pWithUrls.toObject() : pWithUrls;
+      const final = p.toObject ? p.toObject() : p;
       
       if (final.user) {
         final.user = {
           _id: final.user._id,
           username: final.user.username,
-          profilePictureUrl: final.user.profilePicture ? getFileUrl(final.user.profilePicture, req) : null
+          profilePicture: final.user.profilePicture || null
         };
       }
       
@@ -478,7 +459,7 @@ export const getUserProfileByUserId = async (req, res) => {
           if (commentUser && typeof commentUser === 'object') {
             baseComment.userId = commentUser._id;
             baseComment.username = commentUser.username;
-            baseComment.profilePictureUrl = commentUser.profilePicture ? getFileUrl(commentUser.profilePicture, req) : null;
+            baseComment.profilePicture = commentUser.profilePicture || null;
           }
           
           return baseComment;
@@ -515,7 +496,7 @@ export const getUserProfileByUserId = async (req, res) => {
       email: user.email,
       bio: user.bio || '',
       profilePicture: user.profilePicture || '',
-      profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null,
+      profilePicture: user.profilePicture || null,
       followersCount,
       followingCount,
       postsCount,
@@ -552,15 +533,14 @@ export const getPostsByUser = async (req, res) => {
     // Add URLs and format user info
     const postsWithUrls = posts.map(post => {
       const postObj = post.toObject ? post.toObject() : post;
-      const postWithUrls = addUrlsToPost(post, req);
-      const finalPost = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+      const finalPost = post.toObject ? post.toObject() : post;
       
       // Format user object with _id
       if (finalPost.user) {
         finalPost.user = {
           _id: finalPost.user._id,
           username: finalPost.user.username,
-          profilePictureUrl: finalPost.user.profilePicture ? getFileUrl(finalPost.user.profilePicture, req) : null
+          profilePicture: finalPost.user.profilePicture || null
         };
       }
       
@@ -575,7 +555,7 @@ export const getPostsByUser = async (req, res) => {
             user: user && typeof user === 'object' ? {
               _id: user._id,
               username: user.username,
-              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+              profilePicture: user.profilePicture || null
             } : null
           };
         });
@@ -606,15 +586,14 @@ export const getMyPosts = async (req, res) => {
 
     const postsWithUrls = posts.map(post => {
       const postObj = post.toObject ? post.toObject() : post;
-      const postWithUrls = addUrlsToPost(post, req);
-      const finalPost = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+      const finalPost = post.toObject ? post.toObject() : post;
       
       // Format user object with _id
       if (finalPost.user) {
         finalPost.user = {
           _id: finalPost.user._id,
           username: finalPost.user.username,
-          profilePictureUrl: finalPost.user.profilePicture ? getFileUrl(finalPost.user.profilePicture, req) : null
+          profilePicture: finalPost.user.profilePicture || null
         };
       }
       
@@ -629,7 +608,7 @@ export const getMyPosts = async (req, res) => {
             user: user && typeof user === 'object' ? {
               _id: user._id,
               username: user.username,
-              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+              profilePicture: user.profilePicture || null
             } : null
           };
         });
@@ -686,15 +665,14 @@ export const getPostsByTags = async (req, res) => {
     // Add URLs and format user info
     const postsWithUrls = posts.map(post => {
       const postObj = post.toObject ? post.toObject() : post;
-      const postWithUrls = addUrlsToPost(post, req);
-      const finalPost = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+      const finalPost = post.toObject ? post.toObject() : post;
       
       // Format user object with _id
       if (finalPost.user) {
         finalPost.user = {
           _id: finalPost.user._id,
           username: finalPost.user.username,
-          profilePictureUrl: finalPost.user.profilePicture ? getFileUrl(finalPost.user.profilePicture, req) : null
+          profilePicture: finalPost.user.profilePicture || null
         };
       }
       
@@ -709,7 +687,7 @@ export const getPostsByTags = async (req, res) => {
             user: user && typeof user === 'object' ? {
               _id: user._id,
               username: user.username,
-              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+              profilePicture: user.profilePicture || null
             } : null
           };
         });
@@ -801,15 +779,14 @@ export const searchPosts = async (req, res) => {
 
     const postsWithUrls = posts.map(post => {
       const postObj = post.toObject ? post.toObject() : post;
-      const postWithUrls = addUrlsToPost(post, req);
-      const finalPost = postWithUrls.toObject ? postWithUrls.toObject() : postWithUrls;
+      const finalPost = post.toObject ? post.toObject() : post;
       
       // Format user object with _id
       if (finalPost.user) {
         finalPost.user = {
           _id: finalPost.user._id,
           username: finalPost.user.username,
-          profilePictureUrl: finalPost.user.profilePicture ? getFileUrl(finalPost.user.profilePicture, req) : null
+          profilePicture: finalPost.user.profilePicture || null
         };
       }
       
@@ -824,7 +801,7 @@ export const searchPosts = async (req, res) => {
             user: user && typeof user === 'object' ? {
               _id: user._id,
               username: user.username,
-              profilePictureUrl: user.profilePicture ? getFileUrl(user.profilePicture, req) : null
+              profilePicture: user.profilePicture || null
             } : null
           };
         });
@@ -955,7 +932,7 @@ export const getPostComments = async (req, res) => {
       if (user && typeof user === 'object') {
         baseComment.userId = user._id;
         baseComment.username = user.username;
-        baseComment.profilePictureUrl = user.profilePicture ? getFileUrl(user.profilePicture, req) : null;
+        baseComment.profilePicture = user.profilePicture || null;
       }
       
       return baseComment;

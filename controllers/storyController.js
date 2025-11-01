@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 import Story from '../models/storyModel.js';
 import User from '../models/userModel.js';
 import multer from 'multer';
-import { addUrlsToStory, addUrlsToStories, getFileUrl } from '../utils/urlHelper.js';
 // Create a new story
 export const createStory = async (req, res) => {
   try {
@@ -50,13 +49,10 @@ export const createStory = async (req, res) => {
     const populatedStory = await Story.findById(savedStory._id)
       .populate('user', 'username profilePicture');
 
-    // Add URL to the story
-    const storyWithUrl = addUrlsToStory(populatedStory, req);
-
     res.status(201).json({
       success: true,
       message: "Story created successfully",
-      story: storyWithUrl
+      story: populatedStory
     });
 
   } catch (error) {
@@ -92,12 +88,10 @@ export const getAllStories = async (req, res) => {
     });
     const totalPages = Math.ceil(totalStories / limit);
 
-    // Add URLs to all stories
-    const storiesWithUrls = addUrlsToStories(stories, req);
 
     res.status(200).json({
       success: true,
-      stories: storiesWithUrls,
+      stories: stories,
       pagination: {
         currentPage: page,
         totalPages,
@@ -214,20 +208,15 @@ export const getMyStories = async (req, res) => {
     });
     const totalPages = Math.ceil(totalStories / limit);
 
-    // Add URLs to all stories
-    const storiesWithUrls = addUrlsToStories(stories, req);
 
     res.status(200).json({
       success: true,
       message: 'My stories retrieved successfully',
-      stories: storiesWithUrls,
+      stories: stories,
       user: {
         _id: user._id,
         username: user.username,
-        profilePicture: user.profilePicture,
-        profilePictureUrl: user.profilePicture 
-          ? getFileUrl(user.profilePicture, req)
-          : null
+        profilePicture: user.profilePicture || null
       },
       pagination: {
         currentPage: page,
@@ -271,12 +260,9 @@ export const getStoryById = async (req, res) => {
       });
     }
 
-    // Add URL to the story
-    const storyWithUrl = addUrlsToStory(story, req);
-
     res.status(200).json({
       success: true,
-      story: storyWithUrl
+      story: story
     });
 
   } catch (error) {
@@ -484,13 +470,11 @@ export const getStoryFeed = async (req, res) => {
       const userObj = {
         _id: group.user._id,
         username: group.user.username,
-        profilePictureUrl: group.user.profilePicture ? getFileUrl(group.user.profilePicture, req) : null
+        profilePicture: group.user.profilePicture || null
       };
 
       const storiesWithUrls = group.stories.map(s => {
         const entry = { ...s };
-        if (entry.image) entry.imageUrl = getFileUrl(entry.image, req);
-        if (entry.video) entry.videoUrl = getFileUrl(entry.video, req);
         return entry;
       });
 
@@ -764,26 +748,16 @@ export const getStoriesGroupedByUser = async (req, res) => {
     const totalUsersCount = totalUsers.length > 0 ? totalUsers[0].totalUsers : 0;
     const totalPages = Math.ceil(totalUsersCount / limit);
 
-    // Add URLs to stories and user profile pictures
+    // Format stories and user profile pictures
     const storiesByUserWithUrls = storiesByUser.map(group => {
       const userObj = {
         _id: group.user._id,
         username: group.user.username,
-        profilePicture: group.user.profilePicture,
-        profilePictureUrl: group.user.profilePicture 
-          ? getFileUrl(group.user.profilePicture, req) 
-          : null
+        profilePicture: group.user.profilePicture || null
       };
 
       const storiesWithUrls = group.stories.map(story => {
-        const storyObj = { ...story };
-        if (story.image) {
-          storyObj.imageUrl = getFileUrl(story.image, req);
-        }
-        if (story.video) {
-          storyObj.videoUrl = getFileUrl(story.video, req);
-        }
-        return storyObj;
+        return { ...story };
       });
 
       return {

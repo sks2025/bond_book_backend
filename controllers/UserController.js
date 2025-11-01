@@ -7,7 +7,6 @@ import ChatProfile from '../models/chatProfileModel.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import sendEmail from '../config/nodeMailer.js';
-import { getFileUrl } from '../utils/urlHelper.js';
 
 // Register a new user
 export async function register(request, response) {
@@ -376,7 +375,6 @@ export const loginUser = async (req, res) => {
       username: user.username,
       email: user.email,
       profilePicture: user.profilePicture,
-      profilePictureUrl: getFileUrl(user.profilePicture, req),
       bio: user.bio,
       followers: user.followers,
       following: user.following,
@@ -749,7 +747,6 @@ export const updateProfile = async (req, res) => {
       username: user.username,
       email: user.email,
       profilePicture: user.profilePicture,
-      profilePictureUrl: getFileUrl(user.profilePicture, req),
       bio: user.bio,
       followers: user.followers,
       following: user.following,
@@ -807,13 +804,10 @@ export const uploadProfilePicture = async (req, res) => {
     user.profilePicture = file.path;
     await user.save();
 
-    const profilePictureUrl = getFileUrl(user.profilePicture, req);
-
     return res.status(200).json({
       success: true,
       message: 'Profile picture updated successfully',
-      profilePicture: user.profilePicture,
-      profilePictureUrl
+      profilePicture: user.profilePicture
     });
   } catch (error) {
     console.error('Upload profile picture error:', error);
@@ -872,7 +866,6 @@ export const updateBio = async (req, res) => {
         email: user.email,
         bio: user.bio,
         profilePicture: user.profilePicture,
-        profilePictureUrl: getFileUrl(user.profilePicture, req),
         followersCount: followersCount,
         followingCount: followingCount,
         postsCount: postsCount
@@ -984,8 +977,7 @@ export const getCurrentUser = async (req, res) => {
       ...user.toObject(),
       postsCount: postsCount,
       followersCount: followersCount,
-      followingCount: followingCount,
-      profilePictureUrl: getFileUrl(user.profilePicture, req)
+      followingCount: followingCount
     };
 
     return res.status(200).json({
