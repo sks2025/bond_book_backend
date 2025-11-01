@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import User from '../models/userModel.js';
 import PendingUser from '../models/pendingUserModel.js';
 import Post from '../models/postModel.js';
@@ -1290,25 +1291,54 @@ export const toggleFollow = async (req, res) => {
 export const listFollowRequests = async (req, res) => {
   try {
     const userId = req.user.userId;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
 
-    const incoming = await FollowRequest.find({ recipient: userId, status: 'pending' })
+    // Convert userId to ObjectId if it's a valid ObjectId string
+    // Mongoose handles this automatically, but being explicit helps with edge cases
+    const recipientId = mongoose.Types.ObjectId.isValid(userId) 
+      ? new mongoose.Types.ObjectId(userId) 
+      : userId;
+    const requesterId = mongoose.Types.ObjectId.isValid(userId) 
+      ? new mongoose.Types.ObjectId(userId) 
+      : userId;
+    
+    // Query for incoming requests (where current user is the recipient)
+    const incoming = await FollowRequest.find({ 
+      recipient: recipientId, 
+      status: 'pending' 
+    })
       .populate('requester', 'username profilePicture email')
       .sort({ createdAt: -1 });
 
-    const outgoing = await FollowRequest.find({ requester: userId, status: 'pending' })
+    // Query for outgoing requests (where current user is the requester)
+    const outgoing = await FollowRequest.find({ 
+      requester: requesterId, 
+      status: 'pending' 
+    })
       .populate('recipient', 'username profilePicture email')
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
       success: true,
-      incoming,
-      outgoing
+      incoming: incoming || [],
+      outgoing: outgoing || [],
+      count: {
+        incoming: incoming?.length || 0,
+        outgoing: outgoing?.length || 0
+      }
     });
   } catch (error) {
     console.error('List follow requests error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error.message
     });
   }
 };
