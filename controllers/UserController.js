@@ -5,6 +5,7 @@ import Post from '../models/postModel.js';
 import FollowRequest from '../models/followRequestModel.js';
 import ChatConnection from '../models/chatConnectionModel.js';
 import ChatProfile from '../models/chatProfileModel.js';
+import { createNotification } from './notificationController.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import sendEmail from '../config/nodeMailer.js';
@@ -1150,14 +1151,13 @@ export const unfollowUser = async (req, res) => {
   }
 };
 
-// Send a follow request (toggle follow now sends a request)
+// Toggle follow - Send follow request or unfollow
 export const toggleFollow = async (req, res) => {
   try {
     const userId = req.user.userId;
-    
-    // Support both 'userId' and 'followUserId' for backward compatibility
     const followUserId = req.body.userId || req.body.followUserId;
 
+    // Validation
     if (!followUserId) {
       return res.status(400).json({
         success: false,
@@ -1165,10 +1165,10 @@ export const toggleFollow = async (req, res) => {
       });
     }
 
-    // Convert to string for consistent comparison
     const currentUserIdStr = userId.toString();
     const followUserIdStr = followUserId.toString();
 
+    // Cannot follow yourself
     if (currentUserIdStr === followUserIdStr) {
       return res.status(400).json({
         success: false,
@@ -1176,113 +1176,135 @@ export const toggleFollow = async (req, res) => {
       });
     }
 
-    const userToFollow = await User.findById(followUserId);
-    if (!userToFollow) {
+    // Find users
+    const [currentUser, userToFollow] = await Promise.all([
+      User.findById(userId),
+      User.findById(followUserId)
+    ]);
+
+    if (!currentUser || !userToFollow) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    const currentUser = await User.findById(userId);
-    if (!currentUser) {
-      return res.status(404).json({
-        success: false,
-        message: 'Current user not found'
-      });
-    }
-
-    // Check if already has a follow request
-    const existingRequest = await FollowRequest.findOne({
-      requester: userId,
-      recipient: followUserId
-    });
-
-    // Check if already following (verify actual following status)
+    // Check if already following (in actual following array)
     const isCurrentlyFollowing = currentUser.following.some(
       id => id.toString() === followUserIdStr
     );
 
-    // If already following, allow unfollow
+    // If already following, unfollow
     if (isCurrentlyFollowing) {
-      // Unfollow: Remove from following list
+      // Remove from current user's following list
       currentUser.following = currentUser.following.filter(
         id => id.toString() !== followUserIdStr
       );
-      await currentUser.save();
-
-      // Remove from user's followers list
+      
+      // Remove from target user's followers list
       userToFollow.followers = userToFollow.followers.filter(
         id => id.toString() !== currentUserIdStr
       );
-      await userToFollow.save();
 
-      // Delete any follow request (pending or accepted) to clean up
-      if (existingRequest) {
-        await FollowRequest.findOneAndDelete({
-          requester: userId,
-          recipient: followUserId
-        });
-      }
+      await Promise.all([currentUser.save(), userToFollow.save()]);
+
+      // Clean up any existing follow request
+      await FollowRequest.findOneAndDelete({
+        requester: userId,
+        recipient: followUserId
+      });
 
       return res.status(200).json({
         success: true,
         message: 'User unfollowed successfully',
         isFollowing: false,
-        following: currentUser.following.length,
-        followers: userToFollow.followers.length
+        action: 'unfollowed',
+        followingCount: currentUser.following.length,
+        followersCount: userToFollow.followers.length
       });
     }
 
-    // If not following, check existing request status
+    // Check for existing follow request
+    const existingRequest = await FollowRequest.findOne({
+      requester: userId,
+      recipient: followUserId
+    });
+
+    // If request exists and is pending, return error
     if (existingRequest) {
       if (existingRequest.status === 'pending') {
         return res.status(409).json({
           success: false,
           message: 'Follow request already sent',
-          request: existingRequest
+          requestId: existingRequest._id,
+          status: existingRequest.status
         });
-      } else if (existingRequest.status === 'accepted') {
-        // If request is accepted but user is not in following list, there's data inconsistency
-        // Clean it up and allow sending a new request
-        await FollowRequest.findOneAndDelete({
-          requester: userId,
-          recipient: followUserId
-        });
-        // Continue to create new request below
-      } else if (existingRequest.status === 'rejected') {
-        // If rejected, delete the old request and allow sending a new one
-        await FollowRequest.findOneAndDelete({
-          requester: userId,
-          recipient: followUserId
-        });
-        // Continue to create new request below
+      }
+
+      // If request was accepted/rejected, delete it and create new one
+      if (existingRequest.status === 'accepted' || existingRequest.status === 'rejected') {
+        await FollowRequest.findByIdAndDelete(existingRequest._id);
       }
     }
 
-    // Create a new follow request
-    const request = await FollowRequest.create({
-      requester: userId,
-      recipient: followUserId
-    });
+    // Create new follow request
+    try {
+      const newRequest = await FollowRequest.create({
+        requester: userId,
+        recipient: followUserId,
+        status: 'pending'
+      });
 
-    return res.status(201).json({
-      success: true,
-      message: 'Follow request sent successfully',
-      request: request
-    });
+      await newRequest.populate('requester', 'username profilePicture');
+      await newRequest.populate('recipient', 'username profilePicture');
+
+      // Create notification for recipient (they received a follow request)
+      // Use the populated requester username from newRequest
+      const requesterUsername = newRequest.requester.username || currentUser.username;
+      await createNotification(
+        followUserId, // Notify the recipient
+        userId, // From the requester (current user)
+        'follow_request',
+        `${requesterUsername} sent you a follow request`,
+        newRequest._id, // Related to the follow request
+        'FollowRequest'
+      ).catch(err => console.error('Error creating follow request notification:', err));
+
+      return res.status(201).json({
+        success: true,
+        message: 'Follow request sent successfully',
+        request: {
+          _id: newRequest._id,
+          requester: {
+            _id: newRequest.requester._id,
+            username: newRequest.requester.username,
+            profilePicture: newRequest.requester.profilePicture
+          },
+          recipient: {
+            _id: newRequest.recipient._id,
+            username: newRequest.recipient.username,
+            profilePicture: newRequest.recipient.profilePicture
+          },
+          status: newRequest.status,
+          createdAt: newRequest.createdAt
+        }
+      });
+    } catch (createError) {
+      if (createError.code === 11000) {
+        return res.status(409).json({
+          success: false,
+          message: 'Follow request already exists'
+        });
+      }
+      throw createError;
+    }
 
   } catch (error) {
-    console.error('Send follow request error:', error);
-    if (error.code === 11000) {
-      return res.status(409).json({
-        success: false,
-        message: 'Follow request already exists'
-      });
-    }
+    console.error('Toggle follow error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -1291,54 +1313,69 @@ export const toggleFollow = async (req, res) => {
 export const listFollowRequests = async (req, res) => {
   try {
     const userId = req.user.userId;
-    
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'User ID is required'
-      });
-    }
 
-    // Convert userId to ObjectId if it's a valid ObjectId string
-    // Mongoose handles this automatically, but being explicit helps with edge cases
-    const recipientId = mongoose.Types.ObjectId.isValid(userId) 
-      ? new mongoose.Types.ObjectId(userId) 
-      : userId;
-    const requesterId = mongoose.Types.ObjectId.isValid(userId) 
-      ? new mongoose.Types.ObjectId(userId) 
-      : userId;
-    
-    // Query for incoming requests (where current user is the recipient)
-    const incoming = await FollowRequest.find({ 
-      recipient: recipientId, 
-      status: 'pending' 
-    })
-      .populate('requester', 'username profilePicture email')
-      .sort({ createdAt: -1 });
+    // Fetch incoming and outgoing requests in parallel
+    const [incoming, outgoing] = await Promise.all([
+      // Incoming: requests where current user is the recipient
+      FollowRequest.find({
+        recipient: userId,
+        status: 'pending'
+      })
+        .populate('requester', 'username profilePicture email')
+        .sort({ createdAt: -1 })
+        .lean(),
+      
+      // Outgoing: requests where current user is the requester
+      FollowRequest.find({
+        requester: userId,
+        status: 'pending'
+      })
+        .populate('recipient', 'username profilePicture email')
+        .sort({ createdAt: -1 })
+        .lean()
+    ]);
 
-    // Query for outgoing requests (where current user is the requester)
-    const outgoing = await FollowRequest.find({ 
-      requester: requesterId, 
-      status: 'pending' 
-    })
-      .populate('recipient', 'username profilePicture email')
-      .sort({ createdAt: -1 });
+    // Format the response
+    const formatRequest = (req) => ({
+      _id: req._id,
+      status: req.status,
+      createdAt: req.createdAt,
+      updatedAt: req.updatedAt,
+      ...(req.requester && {
+        requester: {
+          _id: req.requester._id,
+          username: req.requester.username,
+          profilePicture: req.requester.profilePicture,
+          email: req.requester.email
+        }
+      }),
+      ...(req.recipient && {
+        recipient: {
+          _id: req.recipient._id,
+          username: req.recipient.username,
+          profilePicture: req.recipient.profilePicture,
+          email: req.recipient.email
+        }
+      })
+    });
 
     return res.status(200).json({
       success: true,
-      incoming: incoming || [],
-      outgoing: outgoing || [],
-      count: {
-        incoming: incoming?.length || 0,
-        outgoing: outgoing?.length || 0
+      incoming: incoming.map(formatRequest),
+      outgoing: outgoing.map(formatRequest),
+      counts: {
+        incoming: incoming.length,
+        outgoing: outgoing.length,
+        total: incoming.length + outgoing.length
       }
     });
+
   } catch (error) {
     console.error('List follow requests error:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -1349,6 +1386,7 @@ export const acceptFollowRequest = async (req, res) => {
     const userId = req.user.userId;
     const { requestId } = req.params;
 
+    // Find the follow request
     const request = await FollowRequest.findById(requestId);
     if (!request) {
       return res.status(404).json({
@@ -1357,22 +1395,27 @@ export const acceptFollowRequest = async (req, res) => {
       });
     }
 
-    if (request.recipient.toString() !== userId) {
+    // Authorization check - only recipient can accept
+    if (request.recipient.toString() !== userId.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to accept this request'
       });
     }
 
+    // Status check - only pending requests can be accepted
     if (request.status !== 'pending') {
       return res.status(400).json({
         success: false,
-        message: `Request already ${request.status}`
+        message: `Cannot accept request. Request is already ${request.status}`
       });
     }
 
-    const requester = await User.findById(request.requester);
-    const recipient = await User.findById(request.recipient);
+    // Find both users
+    const [requester, recipient] = await Promise.all([
+      User.findById(request.requester),
+      User.findById(request.recipient)
+    ]);
 
     if (!requester || !recipient) {
       return res.status(404).json({
@@ -1381,62 +1424,92 @@ export const acceptFollowRequest = async (req, res) => {
       });
     }
 
-    // Update follow relationship
-    const requesterIdStr = request.requester.toString();
-    const recipientIdStr = request.recipient.toString();
+    const requesterIdStr = requester._id.toString();
+    const recipientIdStr = recipient._id.toString();
 
-    // Add to requester's following list (if not already following)
-    const isAlreadyFollowing = requester.following.some(
-      id => id.toString() === recipientIdStr
-    );
-    if (!isAlreadyFollowing) {
-      requester.following.push(request.recipient);
-      await requester.save();
+    // Add follow relationship
+    // Add recipient to requester's following list
+    if (!requester.following.some(id => id.toString() === recipientIdStr)) {
+      requester.following.push(recipient._id);
     }
 
-    // Add to recipient's followers list (if not already a follower)
-    const isAlreadyFollower = recipient.followers.some(
-      id => id.toString() === requesterIdStr
-    );
-    if (!isAlreadyFollower) {
-      recipient.followers.push(request.requester);
-      await recipient.save();
+    // Add requester to recipient's followers list
+    if (!recipient.followers.some(id => id.toString() === requesterIdStr)) {
+      recipient.followers.push(requester._id);
     }
 
-    // Update request status to accepted
+    // Update request status
     request.status = 'accepted';
-    await request.save();
+
+    // Save all changes in parallel
+    await Promise.all([
+      requester.save(),
+      recipient.save(),
+      request.save()
+    ]);
+
+    // Create notification for requester
+    await createNotification(
+      requester._id,
+      recipient._id,
+      'follow_accepted',
+      `${recipient.username} accepted your follow request`,
+      recipient._id,
+      'User'
+    ).catch(err => console.error('Notification error:', err));
 
     // Create chat connection
-    const usersPair = [request.requester.toString(), request.recipient.toString()].sort();
-    const connection = await ChatConnection.findOneAndUpdate(
-      { users: usersPair },
-      { $setOnInsert: { users: usersPair } },
-      { upsert: true, new: true }
-    );
+    const usersPair = [requesterIdStr, recipientIdStr].sort();
+    let connection = await ChatConnection.findOne({ users: usersPair });
+
+    if (!connection) {
+      connection = await ChatConnection.create({ users: usersPair });
+    }
 
     // Create chat profile if not exists
-    const existingProfile = await ChatProfile.findOne({ connection: connection._id });
-    if (!existingProfile) {
-      const bothUsers = await User.find({ _id: { $in: usersPair } }, 'username');
+    let chatProfile = await ChatProfile.findOne({ connection: connection._id });
+    if (!chatProfile) {
+      const bothUsers = await User.find(
+        { _id: { $in: [requester._id, recipient._id] } },
+        'username'
+      );
       const names = bothUsers.map(u => u.username).sort((a, b) => a.localeCompare(b));
       const title = `${names[0]} & ${names[1]}`;
-      await ChatProfile.create({ connection: connection._id, users: usersPair, title });
+      chatProfile = await ChatProfile.create({
+        connection: connection._id,
+        users: usersPair,
+        title
+      });
     }
 
     return res.status(200).json({
       success: true,
-      message: 'Follow request accepted. Chat connection created.',
+      message: 'Follow request accepted successfully',
       isFollowing: true,
-      following: requester.following.length,
-      followers: recipient.followers.length
+      request: {
+        _id: request._id,
+        status: request.status,
+        requester: {
+          _id: requester._id,
+          username: requester.username
+        },
+        recipient: {
+          _id: recipient._id,
+          username: recipient.username
+        }
+      },
+      counts: {
+        following: requester.following.length,
+        followers: recipient.followers.length
+      }
     });
 
   } catch (error) {
     console.error('Accept follow request error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -1447,6 +1520,7 @@ export const rejectFollowRequest = async (req, res) => {
     const userId = req.user.userId;
     const { requestId } = req.params;
 
+    // Find the follow request
     const request = await FollowRequest.findById(requestId);
     if (!request) {
       return res.status(404).json({
@@ -1455,33 +1529,41 @@ export const rejectFollowRequest = async (req, res) => {
       });
     }
 
-    if (request.recipient.toString() !== userId) {
+    // Authorization check - only recipient can reject
+    if (request.recipient.toString() !== userId.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to reject this request'
       });
     }
 
+    // Status check - only pending requests can be rejected
     if (request.status !== 'pending') {
       return res.status(400).json({
         success: false,
-        message: `Request already ${request.status}`
+        message: `Cannot reject request. Request is already ${request.status}`
       });
     }
 
+    // Update request status to rejected
     request.status = 'rejected';
     await request.save();
 
     return res.status(200).json({
       success: true,
-      message: 'Follow request rejected'
+      message: 'Follow request rejected successfully',
+      request: {
+        _id: request._id,
+        status: request.status
+      }
     });
 
   } catch (error) {
     console.error('Reject follow request error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

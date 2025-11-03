@@ -1,5 +1,6 @@
 import Post from '../models/postModel.js';
 import User from '../models/userModel.js';
+import { createNotification } from './notificationController.js';
 
 // Create a new post
 export const createPost = async (req, res) => {
@@ -32,6 +33,31 @@ export const createPost = async (req, res) => {
 
     const newPost = new Post(postData);
     const savedPost = await newPost.save();
+
+    // Get the user who created the post for notification
+    const postUser = await User.findById(userId);
+    
+    // Notify all followers about the new post (if post is not private)
+    if (postUser && !postData.isPrivate && savedPost) {
+      const followers = postUser.followers || [];
+      
+      // Create notifications for all followers (async, don't block response)
+      const notificationPromises = followers.map(followerId => 
+        createNotification(
+          followerId,
+          userId,
+          'new_post',
+          `${postUser.username} created a new post`,
+          savedPost._id,
+          'Post'
+        )
+      );
+      
+      // Run notifications in background (don't await - return response immediately)
+      Promise.all(notificationPromises).catch(err => 
+        console.error('Error sending post notifications:', err)
+      );
+    }
 
     res.status(201).json({
       success: true,

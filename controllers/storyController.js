@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Story from '../models/storyModel.js';
 import User from '../models/userModel.js';
+import { createNotification } from './notificationController.js';
 import multer from 'multer';
 // Create a new story
 export const createStory = async (req, res) => {
@@ -44,6 +45,31 @@ export const createStory = async (req, res) => {
     // Create new story
     const newStory = new Story(storyData);
     const savedStory = await newStory.save();
+    
+    // Get the user who created the story for notification
+    const storyUser = await User.findById(userId);
+    
+    // Notify all followers about the new story
+    if (storyUser && savedStory) {
+      const followers = storyUser.followers || [];
+      
+      // Create notifications for all followers (async, don't block response)
+      const notificationPromises = followers.map(followerId => 
+        createNotification(
+          followerId,
+          userId,
+          'new_story',
+          `${storyUser.username} created a new story`,
+          savedStory._id,
+          'Story'
+        )
+      );
+      
+      // Run notifications in background (don't await - return response immediately)
+      Promise.all(notificationPromises).catch(err => 
+        console.error('Error sending story notifications:', err)
+      );
+    }
     
     // Populate user details
     const populatedStory = await Story.findById(savedStory._id)

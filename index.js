@@ -10,6 +10,7 @@ import storyRouter from './routes/storyRoutes.js';
 import messageRouter from './routes/messageRoutes.js';
 import chatRouter from './routes/chatRoutes.js';
 import reminderRouter from './routes/reminderRoutes.js';
+import notificationRouter from './routes/notificationRoutes.js';
 import { initializeSocket, setSocketIO } from './config/socket.js';
 import { startAutoCleanup } from './controllers/storyController.js';
 
@@ -32,6 +33,7 @@ app.use('/api/stories', storyRouter);
 app.use('/api/messages', messageRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/reminders', reminderRouter);
+app.use('/api/notifications', notificationRouter);
 
 
 
