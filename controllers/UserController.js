@@ -3,8 +3,7 @@ import User from '../models/userModel.js';
 import PendingUser from '../models/pendingUserModel.js';
 import Post from '../models/postModel.js';
 import FollowRequest from '../models/followRequestModel.js';
-import ChatConnection from '../models/chatConnectionModel.js';
-import ChatProfile from '../models/chatProfileModel.js';
+import MutualConnection from '../models/mutualConnectionModel.js';
 import { createNotification } from './notificationController.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -1448,7 +1447,7 @@ export const acceptFollowRequest = async (req, res) => {
       request.save()
     ]);
 
-    // Create notification for requester
+    // Create notification for requester (follow request accepted)
     await createNotification(
       requester._id,
       recipient._id,
@@ -1458,34 +1457,95 @@ export const acceptFollowRequest = async (req, res) => {
       'User'
     ).catch(err => console.error('Notification error:', err));
 
-    // Create chat connection
-    const usersPair = [requesterIdStr, recipientIdStr].sort();
-    let connection = await ChatConnection.findOne({ users: usersPair });
+    // Create mutual connection profile
+    const [user1Id, user2Id] = [requester._id, recipient._id].sort((a, b) => 
+      a.toString().localeCompare(b.toString())
+    );
+    
+    // Generate connectionId before creating (required field)
+    const [id1, id2] = [user1Id.toString(), user2Id.toString()].sort();
+    const connectionId = `${id1}_${id2}`;
+    
+    let mutualConnection = await MutualConnection.findOne({
+      $or: [
+        { user1: user1Id, user2: user2Id },
+        { user1: user2Id, user2: user1Id },
+        { connectionId: connectionId }
+      ]
+    });
 
-    if (!connection) {
-      connection = await ChatConnection.create({ users: usersPair });
-    }
-
-    // Create chat profile if not exists
-    let chatProfile = await ChatProfile.findOne({ connection: connection._id });
-    if (!chatProfile) {
-      const bothUsers = await User.find(
-        { _id: { $in: [requester._id, recipient._id] } },
-        'username'
-      );
-      const names = bothUsers.map(u => u.username).sort((a, b) => a.localeCompare(b));
-      const title = `${names[0]} & ${names[1]}`;
-      chatProfile = await ChatProfile.create({
-        connection: connection._id,
-        users: usersPair,
-        title
+    if (!mutualConnection) {
+      // Generate displayName from usernames
+      const names = [requester.username, recipient.username].sort((a, b) => a.localeCompare(b));
+      const displayName = `${names[0]} & ${names[1]}`;
+      
+      // Create new mutual connection profile
+      mutualConnection = await MutualConnection.create({
+        user1: user1Id,
+        user2: user2Id,
+        connectionId: connectionId,
+        displayName: displayName,
+        createdFrom: request._id,
+        isActive: true
       });
+
+      // Notify both users that they became friends (mutual connection created)
+      await Promise.all([
+        createNotification(
+          requester._id,
+          recipient._id,
+          'mutual_connection_created',
+          `You and ${recipient.username} are now connected! Mutual connection profile created.`,
+          mutualConnection._id,
+          'MutualConnection'
+        ).catch(err => console.error('Error creating mutual connection notification for requester:', err)),
+        createNotification(
+          recipient._id,
+          requester._id,
+          'mutual_connection_created',
+          `You and ${requester.username} are now connected! Mutual connection profile created.`,
+          mutualConnection._id,
+          'MutualConnection'
+        ).catch(err => console.error('Error creating mutual connection notification for recipient:', err))
+      ]);
+    } else if (!mutualConnection.isActive) {
+      // Reactivate if it was deactivated
+      mutualConnection.isActive = true;
+      await mutualConnection.save();
+
+      // Notify both users that their connection was reactivated
+      await Promise.all([
+        createNotification(
+          requester._id,
+          recipient._id,
+          'mutual_connection_reactivated',
+          `Your mutual connection with ${recipient.username} has been reactivated.`,
+          mutualConnection._id,
+          'MutualConnection'
+        ).catch(err => console.error('Error creating reactivation notification for requester:', err)),
+        createNotification(
+          recipient._id,
+          requester._id,
+          'mutual_connection_reactivated',
+          `Your mutual connection with ${requester.username} has been reactivated.`,
+          mutualConnection._id,
+          'MutualConnection'
+        ).catch(err => console.error('Error creating reactivation notification for recipient:', err))
+      ]);
     }
+
+    // Note: Chat functionality is now handled through MutualConnection
+    // Messages are stored with reference to the mutual connection
 
     return res.status(200).json({
       success: true,
-      message: 'Follow request accepted successfully',
+      message: 'Follow request accepted successfully. Mutual connection profile created.',
       isFollowing: true,
+      mutualConnection: {
+        _id: mutualConnection._id,
+        connectionId: mutualConnection.connectionId,
+        displayName: mutualConnection.displayName
+      },
       request: {
         _id: request._id,
         status: request.status,

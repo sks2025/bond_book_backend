@@ -1,5 +1,6 @@
 import Reminder from '../models/reminderModel.js';
 import User from '../models/userModel.js';
+import { createNotification } from './notificationController.js';
 
 // Create a reminder (for yourself or a friend)
 export const createReminder = async (req, res) => {
@@ -51,6 +52,21 @@ export const createReminder = async (req, res) => {
 
     await reminder.populate('forUser', 'username profilePicture');
     await reminder.populate('createdBy', 'username profilePicture');
+
+    // If reminder is created for a friend, notify them
+    if (forUser && reminder.createdBy) {
+      const creator = await User.findById(userId);
+      if (creator) {
+        createNotification(
+          forUser,
+          userId,
+          'reminder_created',
+          `${creator.username} created a reminder for you: ${title}`,
+          reminder._id,
+          'Reminder'
+        ).catch(err => console.error('Error creating reminder notification:', err));
+      }
+    }
 
     return res.status(201).json({
       success: true,
