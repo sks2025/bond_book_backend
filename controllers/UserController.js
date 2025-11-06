@@ -1676,6 +1676,61 @@ export const checkConnection = async (req, res) => {
   }
 };
 
+// Check follow request status for a specific user
+export const checkFollowRequestStatus = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { targetUserId } = req.params;
+
+    if (!targetUserId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Target user ID is required'
+      });
+    }
+
+    const currentUserIdStr = userId.toString();
+    const targetUserIdStr = targetUserId.toString();
+
+    if (currentUserIdStr === targetUserIdStr) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot check follow request status for yourself'
+      });
+    }
+
+    // Check if already following
+    const currentUser = await User.findById(userId).select('following');
+    const isFollowing = currentUser?.following.some(
+      id => id.toString() === targetUserIdStr
+    ) || false;
+
+    // Check for pending follow request
+    const pendingRequest = await FollowRequest.findOne({
+      requester: userId,
+      recipient: targetUserId,
+      status: 'pending'
+    });
+
+    const hasPendingRequest = !!pendingRequest;
+
+    return res.status(200).json({
+      success: true,
+      isFollowing,
+      hasPendingRequest,
+      requestId: pendingRequest?._id || null,
+      status: isFollowing ? 'following' : hasPendingRequest ? 'pending' : 'none'
+    });
+  } catch (error) {
+    console.error('Check follow request status error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 // Logout User
 export const logoutUser = async (req, res) => {
   try {

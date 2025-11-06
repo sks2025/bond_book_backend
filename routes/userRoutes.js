@@ -17,7 +17,8 @@ import {
   listFollowRequests,
   acceptFollowRequest,
   rejectFollowRequest,
-  checkConnection
+  checkConnection,
+  checkFollowRequestStatus
 } from '../controllers/UserController.js';
 import userAuth from '../middleware/userAuth.js';
 import upload from '../middleware/upload.js';
@@ -49,5 +50,6 @@ userRouter.get('/follow-requests', userAuth, listFollowRequests);
 userRouter.post('/follow-requests/:requestId/accept', userAuth, acceptFollowRequest);
 userRouter.post('/follow-requests/:requestId/reject', userAuth, rejectFollowRequest);
 userRouter.get('/connection/:otherUserId', userAuth, checkConnection);
+userRouter.get('/follow-request-status/:targetUserId', userAuth, checkFollowRequestStatus);
 
 export default userRouter;

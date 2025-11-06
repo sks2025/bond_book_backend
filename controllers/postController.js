@@ -1,5 +1,6 @@
 import Post from '../models/postModel.js';
 import User from '../models/userModel.js';
+import FollowRequest from '../models/followRequestModel.js';
 import { createNotification } from './notificationController.js';
 
 // Create a new post
@@ -73,21 +74,49 @@ export const createPost = async (req, res) => {
 // Get all posts
 export const getAllPosts = async (req, res) => {
   try {
+    const currentUserId = req.user?.userId; // Optional - may not be authenticated
+    
     const posts = await Post.find()
-      .populate('user', 'username profilePicture')
+      .populate('user', 'username profilePicture following')
       .populate('comments.user', 'username profilePicture')
       .sort({ createdAt: -1 });
+    
+    // Get current user's following list and pending requests if authenticated
+    let currentUserFollowing = [];
+    let pendingRequestsMap = {};
+    if (currentUserId) {
+      const currentUser = await User.findById(currentUserId).select('following');
+      if (currentUser) {
+        currentUserFollowing = currentUser.following.map(id => id.toString());
+      }
+      
+      // Get all pending follow requests from current user
+      const pendingRequests = await FollowRequest.find({
+        requester: currentUserId,
+        status: 'pending'
+      }).select('recipient');
+      
+      pendingRequests.forEach(req => {
+        pendingRequestsMap[req.recipient.toString()] = true;
+      });
+    }
     
     // Format posts and user info
     const postsWithUrls = posts.map(post => {
       const postObj = post.toObject ? post.toObject() : post;
       
-      // Format user object with _id
+      // Format user object with _id and follow status
       if (postObj.user) {
+        const userId = postObj.user._id.toString();
+        const isFollowing = currentUserFollowing.includes(userId);
+        const hasPendingRequest = pendingRequestsMap[userId] || false;
+        
         postObj.user = {
           _id: postObj.user._id,
           username: postObj.user.username,
-          profilePicture: postObj.user.profilePicture || null
+          profilePicture: postObj.user.profilePicture || null,
+          isFollowing,
+          hasPendingRequest
         };
       }
       
@@ -433,6 +462,7 @@ export const deletePost = async (req, res) => {
     await Post.findByIdAndDelete(id);
 
     res.status(200).json({
+      success: true,
       message: 'Post deleted successfully'
     });
   } catch (error) {
@@ -498,6 +528,7 @@ export const getUserProfileByUserId = async (req, res) => {
     // Check follow status if user is authenticated
     let isFollowing = false;
     let isFollowedBy = false;
+    let hasPendingRequest = false;
     if (currentUserId) {
       const currentUser = await User.findById(currentUserId).select('following');
       if (currentUser) {
@@ -507,6 +538,14 @@ export const getUserProfileByUserId = async (req, res) => {
         isFollowedBy = user.following.some(
           fid => fid.toString() === currentUserId.toString()
         );
+        
+        // Check for pending follow request
+        const pendingRequest = await FollowRequest.findOne({
+          requester: currentUserId,
+          recipient: userId,
+          status: 'pending'
+        });
+        hasPendingRequest = !!pendingRequest;
       }
     }
     
@@ -531,7 +570,8 @@ export const getUserProfileByUserId = async (req, res) => {
       // Follow/unfollow information
       isFollowing,
       isFollowedBy,
-      isConnected: isFollowing && isFollowedBy
+      isConnected: isFollowing && isFollowedBy,
+      hasPendingRequest
     };
     
     res.status(200).json({
