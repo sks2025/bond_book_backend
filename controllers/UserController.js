@@ -1731,6 +1731,80 @@ export const checkFollowRequestStatus = async (req, res) => {
   }
 };
 
+// Check follow request status by postId
+export const checkFollowRequestByPost = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { postId } = req.params;
+
+    if (!postId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Post ID is required'
+      });
+    }
+
+    // Import Post model
+    const Post = (await import('../models/postModel.js')).default;
+
+    // Get post and populate user
+    const post = await Post.findById(postId).select('user');
+    
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
+      });
+    }
+
+    const postOwnerId = post.user.toString();
+    const currentUserIdStr = userId.toString();
+
+    // If post owner is current user, return early
+    if (currentUserIdStr === postOwnerId) {
+      return res.status(200).json({
+        success: true,
+        isOwnPost: true,
+        isFollowing: false,
+        hasPendingRequest: false,
+        status: 'own_post'
+      });
+    }
+
+    // Check if already following
+    const currentUser = await User.findById(userId).select('following');
+    const isFollowing = currentUser?.following.some(
+      id => id.toString() === postOwnerId
+    ) || false;
+
+    // Check for pending follow request
+    const pendingRequest = await FollowRequest.findOne({
+      requester: userId,
+      recipient: post.user,
+      status: 'pending'
+    });
+
+    const hasPendingRequest = !!pendingRequest;
+
+    return res.status(200).json({
+      success: true,
+      isOwnPost: false,
+      postOwnerId: postOwnerId,
+      isFollowing,
+      hasPendingRequest,
+      requestId: pendingRequest?._id || null,
+      status: isFollowing ? 'following' : hasPendingRequest ? 'pending' : 'none'
+    });
+  } catch (error) {
+    console.error('Check follow request by post error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 // Logout User
 export const logoutUser = async (req, res) => {
   try {
