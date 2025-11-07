@@ -1,44 +1,43 @@
 import express from 'express';
 import {
   createReminder,
-  getReminders,
-  getRemindersForFriend,
-  getFollowedFriends,
-  getRemindersForFollowedFriends,
+  getAllReminders,
+  getReminderById,
   updateReminder,
-  markReminderComplete,
-  deleteReminder
+  deleteReminder,
+  markReminderCompleted,
+  snoozeReminder,
+  getUpcomingReminders,
+  getOverdueReminders,
+  getTodayReminders,
+  getReminderStats,
+  getUserFriendsForSharing,
+  shareReminderWithFriends,
+  getSharedReminders
 } from '../controllers/reminderController.js';
 import userAuth from '../middleware/userAuth.js';
 
-const router = express.Router();
+const reminderRouter = express.Router();
 
 // All routes require authentication
-router.use(userAuth);
+reminderRouter.use(userAuth);
 
-// Create a reminder
-router.post('/', createReminder);
+// CRUD operations
+reminderRouter.post('/', createReminder);
+reminderRouter.get('/', getAllReminders);
+reminderRouter.get('/stats', getReminderStats);
+reminderRouter.get('/upcoming', getUpcomingReminders);
+reminderRouter.get('/overdue', getOverdueReminders);
+reminderRouter.get('/today', getTodayReminders);
+reminderRouter.get('/shared', getSharedReminders);
+reminderRouter.get('/friends', getUserFriendsForSharing);
+reminderRouter.get('/:reminderId', getReminderById);
+reminderRouter.put('/:reminderId', updateReminder);
+reminderRouter.delete('/:reminderId', deleteReminder);
 
-// Get all reminders (for user and created by user)
-router.get('/', getReminders);
+// Actions
+reminderRouter.patch('/:reminderId/complete', markReminderCompleted);
+reminderRouter.patch('/:reminderId/snooze', snoozeReminder);
+reminderRouter.post('/:reminderId/share', shareReminderWithFriends);
 
-// Get all friends you follow (for creating reminders)
-router.get('/friends', getFollowedFriends);
-
-// Get reminders for all friends you follow
-router.get('/friends/all', getRemindersForFollowedFriends);
-
-// Get reminders for a specific friend
-router.get('/friend/:friendId', getRemindersForFriend);
-
-// Update a reminder
-router.put('/:reminderId', updateReminder);
-
-// Mark reminder as complete/incomplete (toggle)
-router.put('/:reminderId/complete', markReminderComplete);
-
-// Delete a reminder
-router.delete('/:reminderId', deleteReminder);
-
-export default router;
-
+export default reminderRouter;
