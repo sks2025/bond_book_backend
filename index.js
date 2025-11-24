@@ -12,8 +12,16 @@ import notificationRouter from './routes/notificationRoutes.js';
 import mutualConnectionRouter from './routes/mutualConnectionRoutes.js';
 import { initializeSocket, setSocketIO } from './config/socket.js';
 import { startAutoCleanup } from './controllers/storyController.js';
+import { startReminderCheckJob } from './controllers/reminderController.js';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
-dotenv.config();
+// Get current directory for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Configure dotenv with explicit path
+dotenv.config({ path: join(__dirname, '.env') });
 
 const app = express();
 
@@ -61,6 +69,9 @@ const connectDB = async (retries = 5, delay = 3000) => {
     
     // Start automatic story cleanup (runs every 60 minutes)
     startAutoCleanup(60);
+    
+    // Start automatic reminder checking (runs every 1 minute)
+    startReminderCheckJob(1);
   } catch (error) {
     if (retries > 0) {
       console.error(`❌ MongoDB connection failed. Retrying... (${retries} attempts left)`);

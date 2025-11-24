@@ -14,7 +14,7 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['follow_request', 'follow_accepted', 'new_post', 'new_story', 'profile_update', 'merge_request', 'merge_request_accepted', 'merge_request_rejected', 'mutual_connection_created', 'mutual_connection_reactivated'],
+    enum: ['follow_request', 'follow_accepted', 'new_post', 'new_story', 'profile_update', 'merge_request', 'merge_request_accepted', 'merge_request_rejected', 'mutual_connection_created', 'mutual_connection_reactivated', 'reminder_due'],
     required: true
   },
   message: {
@@ -28,7 +28,7 @@ const notificationSchema = new mongoose.Schema({
   },
   relatedModel: {
     type: String,
-    enum: ['Post', 'Story', 'User', 'FollowRequest', 'MergeRequest', 'MutualConnection', null],
+    enum: ['Post', 'Story', 'User', 'FollowRequest', 'MergeRequest', 'MutualConnection', 'Reminder', null],
     default: null
   },
   isRead: {

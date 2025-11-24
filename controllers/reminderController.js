@@ -609,7 +609,75 @@ export const getSharedReminders = async (req, res) => {
   }
 };
 
-// Check due reminders and create notifications
+// Internal function to check due reminders for all users (used by scheduled job)
+export const checkAllDueReminders = async () => {
+  try {
+    const now = new Date();
+
+    // Find all reminders that are not completed and haven't sent notification
+    const candidates = await Reminder.find({
+      isCompleted: false,
+      notificationSent: false
+    }).populate('user', '_id');
+
+    let totalDueReminders = 0;
+    let totalNotificationsCreated = 0;
+
+    for (const reminder of candidates) {
+      const reminderDateTime = new Date(reminder.reminderDate);
+      const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
+      reminderDateTime.setHours(parseInt(hours, 10) || 0, parseInt(minutes, 10) || 0, 0, 0);
+      
+      // Check if reminder is due (time has passed)
+      if (reminderDateTime <= now) {
+        try {
+          // Get user ID - handle both populated and non-populated cases
+          const userId = reminder.user?._id || reminder.user || reminder.userId;
+          
+          if (!userId) {
+            console.error(`Reminder ${reminder._id} has no user ID`);
+            continue;
+          }
+          
+          await Notification.create({
+            user: userId,
+            fromUser: userId,
+            type: 'reminder_due',
+            message: `Reminder due: ${reminder.title}`,
+            relatedId: reminder._id,
+            relatedModel: 'Reminder'
+          });
+          
+          reminder.notificationSent = true;
+          await reminder.save();
+          
+          totalDueReminders++;
+          totalNotificationsCreated++;
+        } catch (notificationError) {
+          console.error(`Error creating notification for reminder ${reminder._id}:`, notificationError);
+        }
+      }
+    }
+
+    if (totalNotificationsCreated > 0) {
+      console.log(`✅ Checked reminders: ${totalNotificationsCreated} notification(s) created for due reminders`);
+    }
+
+    return {
+      success: true,
+      count: totalDueReminders,
+      notificationsCreated: totalNotificationsCreated
+    };
+  } catch (error) {
+    console.error('Error checking all due reminders:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+// Check due reminders and create notifications (API endpoint for current user)
 export const checkDueReminders = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -655,5 +723,37 @@ export const checkDueReminders = async (req, res) => {
       message: 'Failed to check due reminders',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+  }
+};
+
+// Scheduled job to check due reminders periodically
+let reminderCheckInterval = null;
+
+export const startReminderCheckJob = (intervalMinutes = 1) => {
+  // Stop existing interval if any
+  if (reminderCheckInterval) {
+    clearInterval(reminderCheckInterval);
+  }
+
+  // Run check immediately on startup
+  checkAllDueReminders();
+
+  // Run check every minute (default) or specified interval
+  const intervalMs = intervalMinutes * 60 * 1000;
+  reminderCheckInterval = setInterval(() => {
+    checkAllDueReminders();
+  }, intervalMs);
+
+  console.log(`🔄 Reminder check job started: Checking for due reminders every ${intervalMinutes} minute(s)`);
+  
+  return reminderCheckInterval;
+};
+
+// Stop reminder check job
+export const stopReminderCheckJob = () => {
+  if (reminderCheckInterval) {
+    clearInterval(reminderCheckInterval);
+    reminderCheckInterval = null;
+    console.log('🛑 Reminder check job stopped');
   }
 };
