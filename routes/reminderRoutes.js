@@ -13,7 +13,8 @@ import {
   getReminderStats,
   getUserFriendsForSharing,
   shareReminderWithFriends,
-  getSharedReminders
+  getSharedReminders,
+  checkDueReminders
 } from '../controllers/reminderController.js';
 import userAuth from '../middleware/userAuth.js';
 
@@ -31,6 +32,7 @@ reminderRouter.get('/overdue', getOverdueReminders);
 reminderRouter.get('/today', getTodayReminders);
 reminderRouter.get('/shared', getSharedReminders);
 reminderRouter.get('/friends', getUserFriendsForSharing);
+reminderRouter.get('/check/due', checkDueReminders);
 reminderRouter.get('/:reminderId', getReminderById);
 reminderRouter.put('/:reminderId', updateReminder);
 reminderRouter.delete('/:reminderId', deleteReminder);

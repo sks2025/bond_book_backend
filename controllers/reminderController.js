@@ -177,11 +177,19 @@ export const updateReminder = async (req, res) => {
       'tags', 'color', 'attachments'
     ];
 
+    let scheduleChanged = false;
     allowedUpdates.forEach(field => {
       if (updates[field] !== undefined) {
         reminder[field] = updates[field];
+        if (field === 'reminderDate' || field === 'reminderTime') {
+          scheduleChanged = true;
+        }
       }
     });
+
+    if (scheduleChanged) {
+      reminder.notificationSent = false;
+    }
 
     await reminder.save();
 
@@ -324,6 +332,8 @@ export const snoozeReminder = async (req, res) => {
     }
 
     await reminder.snoozeReminder(minutes);
+    reminder.notificationSent = false;
+    await reminder.save();
 
     return res.status(200).json({
       success: true,
@@ -594,6 +604,55 @@ export const getSharedReminders = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch shared reminders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Check due reminders and create notifications
+export const checkDueReminders = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const now = new Date();
+
+    const candidates = await Reminder.find({
+      user: userId,
+      isCompleted: false,
+      notificationSent: false
+    });
+
+    const dueReminders = candidates.filter((reminder) => {
+      const reminderDateTime = new Date(reminder.reminderDate);
+      const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
+      reminderDateTime.setHours(parseInt(hours, 10) || 0, parseInt(minutes, 10) || 0, 0, 0);
+      return reminderDateTime <= now;
+    });
+
+    if (dueReminders.length > 0) {
+      for (const reminder of dueReminders) {
+        await Notification.create({
+          user: userId,
+          fromUser: userId,
+          type: 'reminder_due',
+          message: `Reminder due: ${reminder.title}`,
+          relatedId: reminder._id,
+          relatedModel: 'Reminder'
+        });
+        reminder.notificationSent = true;
+        await reminder.save();
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      count: dueReminders.length,
+      reminders: dueReminders
+    });
+  } catch (error) {
+    console.error('Check due reminders error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to check due reminders',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
