@@ -613,6 +613,7 @@ export const getSharedReminders = async (req, res) => {
 export const checkAllDueReminders = async () => {
   try {
     const now = new Date();
+    console.log(`🕐 Checking due reminders at ${now.toISOString()}`);
 
     // Find all reminders that are not completed and haven't sent notification
     const candidates = await Reminder.find({
@@ -620,16 +621,29 @@ export const checkAllDueReminders = async () => {
       notificationSent: false
     }).populate('user', '_id');
 
+    console.log(`📋 Found ${candidates.length} candidate reminders to check`);
+
     let totalDueReminders = 0;
     let totalNotificationsCreated = 0;
 
     for (const reminder of candidates) {
-      const reminderDateTime = new Date(reminder.reminderDate);
-      const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
-      reminderDateTime.setHours(parseInt(hours, 10) || 0, parseInt(minutes, 10) || 0, 0, 0);
+      // Create a new date from the reminder date
+      const reminderDate = new Date(reminder.reminderDate);
       
-      // Check if reminder is due (time has passed)
-      if (reminderDateTime <= now) {
+      // Parse the time string (format: "HH:MM")
+      const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
+      const reminderHours = parseInt(hours, 10) || 0;
+      const reminderMinutes = parseInt(minutes, 10) || 0;
+      
+      // Set the time on the reminder date
+      reminderDate.setHours(reminderHours, reminderMinutes, 0, 0);
+      
+      // Check if reminder is due (time has passed or is exactly now)
+      const timeDiff = now.getTime() - reminderDate.getTime();
+      const isDue = timeDiff >= 0;
+      
+      if (isDue) {
+        console.log(`⏰ Reminder "${reminder.title}" is due! (Due: ${reminderDate.toISOString()}, Now: ${now.toISOString()})`);
         try {
           // Get user ID - handle both populated and non-populated cases
           const userId = reminder.user?._id || reminder.user || reminder.userId;
@@ -639,7 +653,7 @@ export const checkAllDueReminders = async () => {
             continue;
           }
           
-          await Notification.create({
+          const notification = await Notification.create({
             user: userId,
             fromUser: userId,
             type: 'reminder_due',
@@ -648,19 +662,31 @@ export const checkAllDueReminders = async () => {
             relatedModel: 'Reminder'
           });
           
+          console.log(`✅ Created notification for reminder "${reminder.title}" (Notification ID: ${notification._id})`);
+          
           reminder.notificationSent = true;
           await reminder.save();
           
           totalDueReminders++;
           totalNotificationsCreated++;
         } catch (notificationError) {
-          console.error(`Error creating notification for reminder ${reminder._id}:`, notificationError);
+          console.error(`❌ Error creating notification for reminder ${reminder._id}:`, notificationError);
+          console.error(`   Error details:`, notificationError.message);
+        }
+      } else {
+        // Log when reminder is not yet due (for debugging)
+        const timeUntilDue = reminderDate.getTime() - now.getTime();
+        const minutesUntilDue = Math.floor(timeUntilDue / (1000 * 60));
+        if (minutesUntilDue <= 5) {
+          console.log(`⏳ Reminder "${reminder.title}" due in ${minutesUntilDue} minutes`);
         }
       }
     }
 
     if (totalNotificationsCreated > 0) {
       console.log(`✅ Checked reminders: ${totalNotificationsCreated} notification(s) created for due reminders`);
+    } else {
+      console.log(`ℹ️  No due reminders found at this time`);
     }
 
     return {
@@ -733,18 +759,26 @@ export const startReminderCheckJob = (intervalMinutes = 1) => {
   // Stop existing interval if any
   if (reminderCheckInterval) {
     clearInterval(reminderCheckInterval);
+    console.log('🛑 Stopped existing reminder check job');
   }
 
+  console.log(`🔄 Starting reminder check job: Will check every ${intervalMinutes} minute(s)`);
+
   // Run check immediately on startup
-  checkAllDueReminders();
+  console.log('🚀 Running initial reminder check...');
+  checkAllDueReminders().catch(err => {
+    console.error('❌ Error in initial reminder check:', err);
+  });
 
   // Run check every minute (default) or specified interval
   const intervalMs = intervalMinutes * 60 * 1000;
   reminderCheckInterval = setInterval(() => {
-    checkAllDueReminders();
+    checkAllDueReminders().catch(err => {
+      console.error('❌ Error in scheduled reminder check:', err);
+    });
   }, intervalMs);
 
-  console.log(`🔄 Reminder check job started: Checking for due reminders every ${intervalMinutes} minute(s)`);
+  console.log(`✅ Reminder check job started successfully (interval: ${intervalMinutes} minute(s), ${intervalMs}ms)`);
   
   return reminderCheckInterval;
 };
