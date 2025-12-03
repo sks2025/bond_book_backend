@@ -2042,6 +2042,7 @@ export const checkMergeRequestStatus = async (req, res) => {
     const userId = req.user.userId;
     const { targetUserId } = req.params;
 
+    // Check for pending merge request
     const mergeRequest = await MergeRequest.findOne({
       $or: [
         { requester: userId, recipient: targetUserId },
@@ -2050,11 +2051,30 @@ export const checkMergeRequestStatus = async (req, res) => {
       status: 'pending'
     });
 
+    // Check if mutual connection already exists
+    const mutualConnection = await MutualConnection.findOne({
+      $and: [
+        { $or: [{ user1: userId }, { user2: userId }] },
+        { $or: [{ user1: targetUserId }, { user2: targetUserId }] }
+      ],
+      isActive: true
+    });
+
+    console.log('Check merge request status:', {
+      userId: userId.toString(),
+      targetUserId: targetUserId.toString(),
+      hasPendingRequest: !!mergeRequest,
+      hasMutualConnection: !!mutualConnection,
+      mutualConnectionId: mutualConnection?._id?.toString() || null
+    });
+
     return res.status(200).json({
       success: true,
       hasPendingRequest: !!mergeRequest,
+      hasMutualConnection: !!mutualConnection,
       requestId: mergeRequest?._id || null,
-      isRequester: mergeRequest?.requester.toString() === userId.toString() || false
+      isRequester: mergeRequest?.requester.toString() === userId.toString() || false,
+      mutualConnectionId: mutualConnection?._id || null
     });
   } catch (error) {
     console.error('Check merge request status error:', error);

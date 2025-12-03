@@ -217,6 +217,68 @@ export const updateMutualConnectionProfile = async (req, res) => {
   }
 };
 
+// Upload/Update mutual connection profile picture (multipart form-data with a file)
+export const uploadMutualConnectionProfilePicture = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { mutualConnectionId } = req.params;
+
+    // Expecting a file from multer: either req.file or first entry in req.files
+    const file = req.file || (req.files && req.files[0]);
+
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Profile picture file is required'
+      });
+    }
+
+    if (!file.mimetype.startsWith('image/')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Only image files are allowed for profile picture'
+      });
+    }
+
+    const mutualConnection = await MutualConnection.findById(mutualConnectionId);
+    
+    if (!mutualConnection) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mutual connection not found'
+      });
+    }
+
+    // Verify user is part of this connection
+    const isPartOfConnection = 
+      mutualConnection.user1.toString() === userId.toString() ||
+      mutualConnection.user2.toString() === userId.toString();
+
+    if (!isPartOfConnection) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this profile'
+      });
+    }
+
+    // Save relative disk path
+    mutualConnection.profilePicture = file.path;
+    await mutualConnection.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      profilePicture: mutualConnection.profilePicture
+    });
+  } catch (error) {
+    console.error('Upload mutual connection profile picture error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error during profile picture upload'
+    });
+  }
+};
+
 // Follow a mutual connection
 export const followMutualConnection = async (req, res) => {
   try {
@@ -315,6 +377,91 @@ export const unfollowMutualConnection = async (req, res) => {
     });
   } catch (error) {
     console.error('Unfollow mutual connection error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Unmerge (delete) a mutual connection
+export const unmergeMutualConnection = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { otherUserId } = req.params;
+
+    console.log('Unmerge request:', { userId: userId.toString(), otherUserId });
+
+    if (!otherUserId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Other user ID is required'
+      });
+    }
+
+    // Find the mutual connection
+    const mutualConnection = await MutualConnection.findOne({
+      $and: [
+        { $or: [{ user1: userId }, { user2: userId }] },
+        { $or: [{ user1: otherUserId }, { user2: otherUserId }] }
+      ],
+      isActive: true
+    });
+
+    console.log('Mutual connection found:', mutualConnection ? mutualConnection._id : 'not found');
+
+    if (!mutualConnection) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mutual connection not found'
+      });
+    }
+
+    // Verify user is part of this connection
+    const isPartOfConnection = 
+      mutualConnection.user1.toString() === userId.toString() ||
+      mutualConnection.user2.toString() === userId.toString();
+
+    if (!isPartOfConnection) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to unmerge this connection'
+      });
+    }
+
+    // Get both users
+    const user1 = await User.findById(mutualConnection.user1);
+    const user2 = await User.findById(mutualConnection.user2);
+
+    if (!user1 || !user2) {
+      return res.status(404).json({
+        success: false,
+        message: 'Users not found'
+      });
+    }
+
+    // Remove each user from the other's following list
+    user1.following = user1.following.filter(
+      id => id.toString() !== user2._id.toString()
+    );
+    user2.following = user2.following.filter(
+      id => id.toString() !== user1._id.toString()
+    );
+
+    await user1.save();
+    await user2.save();
+
+    // Deactivate the mutual connection
+    mutualConnection.isActive = false;
+    await mutualConnection.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Mutual connection unmerged successfully'
+    });
+  } catch (error) {
+    console.error('Unmerge mutual connection error:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error',

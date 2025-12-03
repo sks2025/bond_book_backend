@@ -6,8 +6,10 @@ import {
   getMutualConnectionById,
   getUserMutualConnections,
   updateMutualConnectionProfile,
+  uploadMutualConnectionProfilePicture,
   followMutualConnection,
-  unfollowMutualConnection
+  unfollowMutualConnection,
+  unmergeMutualConnection
 } from '../controllers/mutualConnectionController.js';
 import {
   createMutualConnectionPost,
@@ -28,10 +30,20 @@ import {
 const router = express.Router();
 
 // Mutual Connection Routes
+// IMPORTANT: Specific routes must come before parameterized routes
 router.get('/my-connections', userAuth, getUserMutualConnections);
-router.get('/:otherUserId', userAuth, getMutualConnection);
 router.get('/by-id/:mutualConnectionId', userAuth, getMutualConnectionById);
+
+// Unmerge route - must be before catch-all routes
+// Test route to verify DELETE is working
+router.delete('/unmerge/:otherUserId', userAuth, async (req, res, next) => {
+  console.log('DELETE /unmerge route matched!', req.params);
+  next();
+}, unmergeMutualConnection);
+
+router.get('/:otherUserId', userAuth, getMutualConnection);
 router.put('/:mutualConnectionId/profile', userAuth, updateMutualConnectionProfile);
+router.put('/:mutualConnectionId/profile-picture', userAuth, upload.any(), uploadMutualConnectionProfilePicture);
 router.post('/:mutualConnectionId/follow', userAuth, followMutualConnection);
 router.post('/:mutualConnectionId/unfollow', userAuth, unfollowMutualConnection);
 

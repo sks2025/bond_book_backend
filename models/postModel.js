@@ -37,24 +37,37 @@ postSchema.pre('validate', function(next) {
 });
 
 // Like methods
-postSchema.methods.likePost = function(userId) {
-  if (!this.likedBy.includes(userId)) {
+postSchema.methods.likePost = async function(userId) {
+  const userIdStr = userId.toString();
+  const isAlreadyLiked = this.likedBy.some(id => id.toString() === userIdStr);
+  
+  if (!isAlreadyLiked) {
     this.likedBy.push(userId);
-    this.likes = this.likedBy.length;
-    this.likeCount = this.likedBy.length;
   }
-  return this.save();
-};
-
-postSchema.methods.unlikePost = function(userId) {
-  this.likedBy = this.likedBy.filter(id => id.toString() !== userId.toString());
+  
+  // Always update counts based on current likedBy array length
   this.likes = this.likedBy.length;
   this.likeCount = this.likedBy.length;
-  return this.save();
+  
+  await this.save();
+  return this;
+};
+
+postSchema.methods.unlikePost = async function(userId) {
+  const userIdStr = userId.toString();
+  this.likedBy = this.likedBy.filter(id => id.toString() !== userIdStr);
+  
+  // Always update counts based on current likedBy array length
+  this.likes = this.likedBy.length;
+  this.likeCount = this.likedBy.length;
+  
+  await this.save();
+  return this;
 };
 
 postSchema.methods.isLikedBy = function(userId) {
-  return this.likedBy.includes(userId);
+  const userIdStr = userId.toString();
+  return this.likedBy.some(id => id.toString() === userIdStr);
 };
 
 // Comment methods

@@ -105,6 +105,25 @@ export const getAllPosts = async (req, res) => {
     const postsWithUrls = posts.map(post => {
       const postObj = post.toObject ? post.toObject() : post;
       
+      // Ensure likeCount is set properly
+      if (postObj.likedBy && Array.isArray(postObj.likedBy)) {
+        postObj.likeCount = postObj.likedBy.length;
+        postObj.likes = postObj.likedBy.length;
+      } else {
+        postObj.likeCount = postObj.likeCount || postObj.likes || 0;
+        postObj.likes = postObj.likes || postObj.likeCount || 0;
+      }
+      
+      // Check if current user has liked this post
+      if (currentUserId && postObj.likedBy) {
+        const likedByArray = Array.isArray(postObj.likedBy) 
+          ? postObj.likedBy.map(id => id.toString ? id.toString() : id)
+          : [];
+        postObj.isLiked = likedByArray.includes(currentUserId.toString());
+      } else {
+        postObj.isLiked = false;
+      }
+      
       // Format user object with _id and follow status
       if (postObj.user) {
         const userId = postObj.user._id.toString();
@@ -590,6 +609,7 @@ export const getUserProfileByUserId = async (req, res) => {
 export const getPostsByUser = async (req, res) => {
   try {
     const { userId } = req.params;
+    const currentUserId = req.user?.userId;
     
     const posts = await Post.find({ user: userId })
       .populate('user', 'username profilePicture')
@@ -600,6 +620,16 @@ export const getPostsByUser = async (req, res) => {
     const postsWithUrls = posts.map(post => {
       const postObj = post.toObject ? post.toObject() : post;
       const finalPost = post.toObject ? post.toObject() : post;
+      
+      // Check if current user has liked this post
+      if (currentUserId && finalPost.likedBy) {
+        const likedByArray = Array.isArray(finalPost.likedBy) 
+          ? finalPost.likedBy.map(id => id.toString ? id.toString() : id)
+          : [];
+        finalPost.isLiked = likedByArray.includes(currentUserId.toString());
+      } else {
+        finalPost.isLiked = false;
+      }
       
       // Format user object with _id
       if (finalPost.user) {
@@ -653,6 +683,16 @@ export const getMyPosts = async (req, res) => {
     const postsWithUrls = posts.map(post => {
       const postObj = post.toObject ? post.toObject() : post;
       const finalPost = post.toObject ? post.toObject() : post;
+      
+      // Check if current user has liked this post
+      if (finalPost.likedBy) {
+        const likedByArray = Array.isArray(finalPost.likedBy) 
+          ? finalPost.likedBy.map(id => id.toString ? id.toString() : id)
+          : [];
+        finalPost.isLiked = likedByArray.includes(userId.toString());
+      } else {
+        finalPost.isLiked = false;
+      }
       
       // Format user object with _id
       if (finalPost.user) {
@@ -897,7 +937,10 @@ export const togglePostLike = async (req, res) => {
 
     const post = await Post.findById(id);
     if (!post) {
-      return res.status(404).json({ message: 'Post not found' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Post not found' 
+      });
     }
 
     // Use either 'action' or 'like' field
@@ -906,26 +949,65 @@ export const togglePostLike = async (req, res) => {
     // Convert action to number and handle string inputs
     const actionNum = parseInt(actionValue);
     
+    // Check current like status
+    const isCurrentlyLiked = post.isLikedBy(userId);
+    
     if (actionNum === 1 || actionValue === 1 || actionValue === '1' || actionValue === true) {
-      await post.likePost(userId);
-      res.status(200).json({
-        message: 'Post liked successfully',
-        likes: post.likes
-      });
+      // User wants to like
+      if (!isCurrentlyLiked) {
+        const updatedPost = await post.likePost(userId);
+        // Use the returned post object which has updated counts
+        res.status(200).json({
+          success: true,
+          message: 'Post liked successfully',
+          likes: updatedPost.likes,
+          likeCount: updatedPost.likeCount,
+          isLiked: true
+        });
+      } else {
+        // Already liked, return current state
+        res.status(200).json({
+          success: true,
+          message: 'Post already liked',
+          likes: post.likes,
+          likeCount: post.likeCount,
+          isLiked: true
+        });
+      }
     } else if (actionNum === 0 || actionValue === 0 || actionValue === '0' || actionValue === false) {
-      await post.unlikePost(userId);
-      res.status(200).json({
-        message: 'Post unliked successfully',
-        likes: post.likes
-      });
+      // User wants to unlike
+      if (isCurrentlyLiked) {
+        const updatedPost = await post.unlikePost(userId);
+        // Use the returned post object which has updated counts
+        res.status(200).json({
+          success: true,
+          message: 'Post unliked successfully',
+          likes: updatedPost.likes,
+          likeCount: updatedPost.likeCount,
+          isLiked: false
+        });
+      } else {
+        // Already unliked, return current state
+        res.status(200).json({
+          success: true,
+          message: 'Post already unliked',
+          likes: post.likes,
+          likeCount: post.likeCount,
+          isLiked: false
+        });
+      }
     } else {
       res.status(400).json({ 
+        success: false,
         message: 'Invalid action. Send {"action": 1} or {"like": 1} to like. Send {"action": 0} or {"like": 0} to unlike' 
       });
     }
   } catch (error) {
     console.error('Error toggling post like:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Internal server error' 
+    });
   }
 };
 
