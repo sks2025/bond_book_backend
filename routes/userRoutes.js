@@ -24,7 +24,9 @@ import {
   acceptMergeRequest,
   rejectMergeRequest,
   getMergeRequests,
-  checkMergeRequestStatus
+  checkMergeRequestStatus,
+  getFollowers,
+  getFollowing
 } from '../controllers/UserController.js';
 import userAuth from '../middleware/userAuth.js';
 import upload from '../middleware/upload.js';
@@ -65,5 +67,9 @@ userRouter.get('/merge-requests', userAuth, getMergeRequests);
 userRouter.post('/merge-requests/:requestId/accept', userAuth, acceptMergeRequest);
 userRouter.post('/merge-requests/:requestId/reject', userAuth, rejectMergeRequest);
 userRouter.get('/merge-request-status/:targetUserId', userAuth, checkMergeRequestStatus);
+
+// Get followers and following lists
+userRouter.get('/:userId/followers', userAuth, getFollowers);
+userRouter.get('/:userId/following', userAuth, getFollowing);
 
 export default userRouter;

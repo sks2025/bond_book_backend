@@ -2109,3 +2109,103 @@ export const logoutUser = async (req, res) => {
     });
   }
 };
+
+// Get followers list for a user
+export const getFollowers = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user?.userId;
+
+    const user = await User.findById(userId)
+      .populate('followers', 'username profilePicture email bio isVerified')
+      .select('followers');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Format followers with follow status if current user is viewing
+    let followersList = user.followers || [];
+    if (currentUserId) {
+      const currentUser = await User.findById(currentUserId).select('following');
+      const currentUserFollowing = currentUser?.following || [];
+      
+      followersList = followersList.map((follower) => {
+        const followerObj = follower.toObject ? follower.toObject() : follower;
+        return {
+          ...followerObj,
+          isFollowing: currentUserFollowing.some(
+            (id) => id.toString() === followerObj._id.toString()
+          )
+        };
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      followers: followersList,
+      count: followersList.length
+    });
+
+  } catch (error) {
+    console.error('Get followers error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get following list for a user
+export const getFollowing = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user?.userId;
+
+    const user = await User.findById(userId)
+      .populate('following', 'username profilePicture email bio isVerified')
+      .select('following');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Format following with follow status if current user is viewing
+    let followingList = user.following || [];
+    if (currentUserId) {
+      const currentUser = await User.findById(currentUserId).select('following');
+      const currentUserFollowing = currentUser?.following || [];
+      
+      followingList = followingList.map((following) => {
+        const followingObj = following.toObject ? following.toObject() : following;
+        return {
+          ...followingObj,
+          isFollowing: currentUserFollowing.some(
+            (id) => id.toString() === followingObj._id.toString()
+          )
+        };
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      following: followingList,
+      count: followingList.length
+    });
+
+  } catch (error) {
+    console.error('Get following error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
