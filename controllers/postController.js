@@ -511,8 +511,26 @@ export const getUserProfileByUserId = async (req, res) => {
     
     // Format all user posts with URLs
     const userPostsFormatted = allUserPosts.map(p => {
-      const pObj = p.toObject ? p.toObject() : p;
       const final = p.toObject ? p.toObject() : p;
+      
+      // Ensure likeCount is set properly
+      if (final.likedBy && Array.isArray(final.likedBy)) {
+        final.likeCount = final.likedBy.length;
+        final.likes = final.likedBy.length;
+      } else {
+        final.likeCount = final.likeCount || final.likes || 0;
+        final.likes = final.likes || final.likeCount || 0;
+      }
+      
+      // Check if current user has liked this post
+      if (currentUserId && final.likedBy) {
+        const likedByArray = Array.isArray(final.likedBy) 
+          ? final.likedBy.map(id => id.toString ? id.toString() : id)
+          : [];
+        final.isLiked = likedByArray.includes(currentUserId.toString());
+      } else {
+        final.isLiked = false;
+      }
       
       if (final.user) {
         final.user = {
@@ -579,7 +597,6 @@ export const getUserProfileByUserId = async (req, res) => {
       username: user.username,
       email: user.email,
       bio: user.bio || '',
-      profilePicture: user.profilePicture || '',
       profilePicture: user.profilePicture || null,
       followersCount,
       followingCount,
