@@ -1,0 +1,876 @@
+import Reminder from '../models/reminderModel.js';
+import User from '../models/userModel.js';
+import Notification from '../models/notificationModel.js';
+
+// Create a new reminder
+export const createReminder = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { 
+      title, 
+      description, 
+      reminderDate, 
+      reminderTime, 
+      priority, 
+      category,
+      isRecurring,
+      recurringType,
+      tags,
+      color,
+      attachments
+    } = req.body;
+
+    // Validation
+    if (!title || !reminderDate || !reminderTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'Title, date, and time are required'
+      });
+    }
+
+    // Create reminder
+    const reminder = new Reminder({
+      user: userId,
+      title,
+      description,
+      reminderDate: new Date(reminderDate),
+      reminderTime,
+      priority: priority || 'medium',
+      category: category || 'personal',
+      isRecurring: isRecurring || false,
+      recurringType: isRecurring ? recurringType : null,
+      tags: tags || [],
+      color: color || '#8B5CF6',
+      attachments: attachments || []
+    });
+
+    await reminder.save();
+
+    return res.status(201).json({
+      success: true,
+      message: 'Reminder created successfully',
+      reminder
+    });
+  } catch (error) {
+    console.error('Create reminder error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create reminder',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get all reminders for logged-in user
+export const getAllReminders = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { 
+      completed, 
+      priority, 
+      category, 
+      startDate, 
+      endDate,
+      sortBy = 'reminderDate',
+      order = 'asc'
+    } = req.query;
+
+    // Build filter
+    const filter = { user: userId };
+    
+    if (completed !== undefined) {
+      filter.isCompleted = completed === 'true';
+    }
+    
+    if (priority) {
+      filter.priority = priority;
+    }
+    
+    if (category) {
+      filter.category = category;
+    }
+    
+    if (startDate || endDate) {
+      filter.reminderDate = {};
+      if (startDate) filter.reminderDate.$gte = new Date(startDate);
+      if (endDate) filter.reminderDate.$lte = new Date(endDate);
+    }
+
+    // Build sort
+    const sort = {};
+    sort[sortBy] = order === 'desc' ? -1 : 1;
+
+    const reminders = await Reminder.find(filter)
+      .sort(sort)
+      .populate('user', 'username profilePicture');
+
+    return res.status(200).json({
+      success: true,
+      count: reminders.length,
+      reminders
+    });
+  } catch (error) {
+    console.error('Get reminders error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch reminders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get reminder by ID
+export const getReminderById = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { reminderId } = req.params;
+
+    const reminder = await Reminder.findOne({
+      _id: reminderId,
+      user: userId
+    }).populate('user', 'username profilePicture');
+
+    if (!reminder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reminder not found'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      reminder
+    });
+  } catch (error) {
+    console.error('Get reminder error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch reminder',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Update reminder
+export const updateReminder = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { reminderId } = req.params;
+    const updates = req.body;
+
+    const reminder = await Reminder.findOne({
+      _id: reminderId,
+      user: userId
+    });
+
+    if (!reminder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reminder not found'
+      });
+    }
+
+    // Update fields
+    const allowedUpdates = [
+      'title', 'description', 'reminderDate', 'reminderTime', 
+      'priority', 'category', 'isRecurring', 'recurringType',
+      'tags', 'color', 'attachments'
+    ];
+
+    let scheduleChanged = false;
+    allowedUpdates.forEach(field => {
+      if (updates[field] !== undefined) {
+        reminder[field] = updates[field];
+        if (field === 'reminderDate' || field === 'reminderTime') {
+          scheduleChanged = true;
+        }
+      }
+    });
+
+    if (scheduleChanged) {
+      reminder.notificationSent = false;
+    }
+
+    await reminder.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Reminder updated successfully',
+      reminder
+    });
+  } catch (error) {
+    console.error('Update reminder error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update reminder',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Delete reminder
+export const deleteReminder = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { reminderId } = req.params;
+
+    const reminder = await Reminder.findOneAndDelete({
+      _id: reminderId,
+      user: userId
+    });
+
+    if (!reminder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reminder not found'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Reminder deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete reminder error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete reminder',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Mark reminder as completed
+export const markReminderCompleted = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { reminderId } = req.params;
+
+    const reminder = await Reminder.findOne({
+      _id: reminderId,
+      user: userId
+    });
+
+    if (!reminder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reminder not found'
+      });
+    }
+
+    await reminder.markCompleted();
+
+    // If recurring, create next occurrence
+    if (reminder.isRecurring && reminder.recurringType) {
+      const nextDate = new Date(reminder.reminderDate);
+      
+      switch (reminder.recurringType) {
+        case 'daily':
+          nextDate.setDate(nextDate.getDate() + 1);
+          break;
+        case 'weekly':
+          nextDate.setDate(nextDate.getDate() + 7);
+          break;
+        case 'monthly':
+          nextDate.setMonth(nextDate.getMonth() + 1);
+          break;
+        case 'yearly':
+          nextDate.setFullYear(nextDate.getFullYear() + 1);
+          break;
+      }
+
+      // Create next reminder
+      const nextReminder = new Reminder({
+        user: reminder.user,
+        title: reminder.title,
+        description: reminder.description,
+        reminderDate: nextDate,
+        reminderTime: reminder.reminderTime,
+        priority: reminder.priority,
+        category: reminder.category,
+        isRecurring: true,
+        recurringType: reminder.recurringType,
+        tags: reminder.tags,
+        color: reminder.color
+      });
+
+      await nextReminder.save();
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Reminder marked as completed',
+      reminder
+    });
+  } catch (error) {
+    console.error('Complete reminder error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to complete reminder',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Snooze reminder
+export const snoozeReminder = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { reminderId } = req.params;
+    const { minutes = 15 } = req.body;
+
+    const reminder = await Reminder.findOne({
+      _id: reminderId,
+      user: userId
+    });
+
+    if (!reminder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reminder not found'
+      });
+    }
+
+    await reminder.snoozeReminder(minutes);
+    reminder.notificationSent = false;
+    await reminder.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Reminder snoozed for ${minutes} minutes`,
+      reminder
+    });
+  } catch (error) {
+    console.error('Snooze reminder error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to snooze reminder',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Dismiss reminder (turn off reminder popup permanently)
+export const dismissReminder = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { reminderId } = req.params;
+
+    const reminder = await Reminder.findOne({
+      _id: reminderId,
+      user: userId
+    });
+
+    if (!reminder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reminder not found'
+      });
+    }
+
+    reminder.isDismissed = true;
+    await reminder.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Reminder dismissed successfully',
+      reminder
+    });
+  } catch (error) {
+    console.error('Dismiss reminder error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to dismiss reminder',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get active due reminders for popup (not dismissed, not completed, due today)
+export const getActiveDueReminders = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const now = new Date();
+
+    // Get start and end of today
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(now);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Find reminders that are due today, not completed, and not dismissed
+    const reminders = await Reminder.find({
+      user: userId,
+      isCompleted: false,
+      isDismissed: false,
+      reminderDate: {
+        $gte: startOfDay,
+        $lte: endOfDay
+      }
+    }).sort({ reminderTime: 1 });
+
+    // Filter to only include reminders that are actually due (time has passed)
+    const dueReminders = reminders.filter((reminder) => {
+      const reminderDateTime = new Date(reminder.reminderDate);
+      const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
+      reminderDateTime.setHours(parseInt(hours, 10) || 0, parseInt(minutes, 10) || 0, 0, 0);
+      return reminderDateTime <= now;
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: dueReminders.length,
+      reminders: dueReminders
+    });
+  } catch (error) {
+    console.error('Get active due reminders error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch active due reminders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get upcoming reminders
+export const getUpcomingReminders = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { limit = 10 } = req.query;
+
+    const reminders = await Reminder.getUpcoming(userId, parseInt(limit));
+
+    return res.status(200).json({
+      success: true,
+      count: reminders.length,
+      reminders
+    });
+  } catch (error) {
+    console.error('Get upcoming reminders error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch upcoming reminders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get overdue reminders
+export const getOverdueReminders = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const reminders = await Reminder.getOverdue(userId);
+
+    return res.status(200).json({
+      success: true,
+      count: reminders.length,
+      reminders
+    });
+  } catch (error) {
+    console.error('Get overdue reminders error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch overdue reminders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get today's reminders
+export const getTodayReminders = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const reminders = await Reminder.getToday(userId);
+
+    return res.status(200).json({
+      success: true,
+      count: reminders.length,
+      reminders
+    });
+  } catch (error) {
+    console.error('Get today reminders error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch today\'s reminders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get reminder statistics
+export const getReminderStats = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const [
+      totalReminders,
+      completedReminders,
+      overdueReminders,
+      todayReminders
+    ] = await Promise.all([
+      Reminder.countDocuments({ user: userId }),
+      Reminder.countDocuments({ user: userId, isCompleted: true }),
+      Reminder.getOverdue(userId).then(r => r.length),
+      Reminder.getToday(userId).then(r => r.length)
+    ]);
+
+    // Get reminders by priority
+    const byPriority = await Reminder.aggregate([
+      { $match: { user: userId, isCompleted: false } },
+      { $group: { _id: '$priority', count: { $sum: 1 } } }
+    ]);
+
+    // Get reminders by category
+    const byCategory = await Reminder.aggregate([
+      { $match: { user: userId, isCompleted: false } },
+      { $group: { _id: '$category', count: { $sum: 1 } } }
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      stats: {
+        total: totalReminders,
+        completed: completedReminders,
+        pending: totalReminders - completedReminders,
+        overdue: overdueReminders,
+        today: todayReminders,
+        byPriority,
+        byCategory
+      }
+    });
+  } catch (error) {
+    console.error('Get reminder stats error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch reminder statistics',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get user's friends/followers for sharing
+export const getUserFriendsForSharing = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const user = await User.findById(userId)
+      .populate('following', 'username profilePicture email')
+      .select('following');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      friends: user.following || []
+    });
+  } catch (error) {
+    console.error('Get friends error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch friends',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Share/Send reminder to friends
+export const shareReminderWithFriends = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { reminderId } = req.params;
+    const { friendIds, wishMessage } = req.body;
+
+    if (!friendIds || !Array.isArray(friendIds) || friendIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please select at least one friend to share with'
+      });
+    }
+
+    // Get original reminder
+    const originalReminder = await Reminder.findOne({
+      _id: reminderId,
+      user: userId
+    });
+
+    if (!originalReminder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reminder not found'
+      });
+    }
+
+    // Get sender info
+    const sender = await User.findById(userId).select('username profilePicture');
+
+    // Create shared reminders for each friend
+    const sharedReminders = [];
+    const notifications = [];
+
+    for (const friendId of friendIds) {
+      // Create a copy of reminder for friend
+      const sharedReminder = new Reminder({
+        user: friendId,
+        title: originalReminder.title,
+        description: originalReminder.description,
+        reminderDate: originalReminder.reminderDate,
+        reminderTime: originalReminder.reminderTime,
+        priority: originalReminder.priority,
+        category: originalReminder.category,
+        isShared: true,
+        sharedBy: userId,
+        wishMessage: wishMessage || `${sender.username} sent you a reminder!`,
+        color: originalReminder.color
+      });
+
+      await sharedReminder.save();
+      sharedReminders.push(sharedReminder);
+
+      // Create notification for friend
+      const notification = new Notification({
+        user: friendId,
+        type: 'reminder',
+        title: `${sender.username} sent you a reminder`,
+        message: wishMessage || `${originalReminder.title}`,
+        relatedUser: userId,
+        relatedId: sharedReminder._id,
+        link: `/reminders/${sharedReminder._id}`
+      });
+
+      await notification.save();
+      notifications.push(notification);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Reminder shared with ${friendIds.length} friend(s)`,
+      sharedReminders,
+      notificationsSent: notifications.length
+    });
+  } catch (error) {
+    console.error('Share reminder error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to share reminder',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get shared reminders (received from friends)
+export const getSharedReminders = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const sharedReminders = await Reminder.find({
+      user: userId,
+      isShared: true
+    })
+      .populate('sharedBy', 'username profilePicture')
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      count: sharedReminders.length,
+      reminders: sharedReminders
+    });
+  } catch (error) {
+    console.error('Get shared reminders error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch shared reminders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Internal function to check due reminders for all users (used by scheduled job)
+export const checkAllDueReminders = async () => {
+  try {
+    const now = new Date();
+    console.log(`🕐 Checking due reminders at ${now.toISOString()}`);
+
+    // Find all reminders that are not completed and haven't sent notification
+    const candidates = await Reminder.find({
+      isCompleted: false,
+      notificationSent: false
+    }).populate('user', '_id');
+
+    console.log(`📋 Found ${candidates.length} candidate reminders to check`);
+
+    let totalDueReminders = 0;
+    let totalNotificationsCreated = 0;
+
+    for (const reminder of candidates) {
+      // Create a new date from the reminder date
+      const reminderDate = new Date(reminder.reminderDate);
+      
+      // Parse the time string (format: "HH:MM")
+      const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
+      const reminderHours = parseInt(hours, 10) || 0;
+      const reminderMinutes = parseInt(minutes, 10) || 0;
+      
+      // Set the time on the reminder date
+      reminderDate.setHours(reminderHours, reminderMinutes, 0, 0);
+      
+      // Check if reminder is due (time has passed or is exactly now)
+      const timeDiff = now.getTime() - reminderDate.getTime();
+      const isDue = timeDiff >= 0;
+      
+      if (isDue) {
+        console.log(`⏰ Reminder "${reminder.title}" is due! (Due: ${reminderDate.toISOString()}, Now: ${now.toISOString()})`);
+        try {
+          // Get user ID - handle both populated and non-populated cases
+          const userId = reminder.user?._id || reminder.user || reminder.userId;
+          
+          if (!userId) {
+            console.error(`Reminder ${reminder._id} has no user ID`);
+            continue;
+          }
+          
+          const notification = await Notification.create({
+            user: userId,
+            fromUser: userId,
+            type: 'reminder_due',
+            message: `Reminder due: ${reminder.title}`,
+            relatedId: reminder._id,
+            relatedModel: 'Reminder'
+          });
+          
+          console.log(`✅ Created notification for reminder "${reminder.title}" (Notification ID: ${notification._id})`);
+          
+          reminder.notificationSent = true;
+          await reminder.save();
+          
+          totalDueReminders++;
+          totalNotificationsCreated++;
+        } catch (notificationError) {
+          console.error(`❌ Error creating notification for reminder ${reminder._id}:`, notificationError);
+          console.error(`   Error details:`, notificationError.message);
+        }
+      } else {
+        // Log when reminder is not yet due (for debugging)
+        const timeUntilDue = reminderDate.getTime() - now.getTime();
+        const minutesUntilDue = Math.floor(timeUntilDue / (1000 * 60));
+        if (minutesUntilDue <= 5) {
+          console.log(`⏳ Reminder "${reminder.title}" due in ${minutesUntilDue} minutes`);
+        }
+      }
+    }
+
+    if (totalNotificationsCreated > 0) {
+      console.log(`✅ Checked reminders: ${totalNotificationsCreated} notification(s) created for due reminders`);
+    } else {
+      console.log(`ℹ️  No due reminders found at this time`);
+    }
+
+    return {
+      success: true,
+      count: totalDueReminders,
+      notificationsCreated: totalNotificationsCreated
+    };
+  } catch (error) {
+    console.error('Error checking all due reminders:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+// Check due reminders and create notifications (API endpoint for current user)
+export const checkDueReminders = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const now = new Date();
+
+    const candidates = await Reminder.find({
+      user: userId,
+      isCompleted: false,
+      notificationSent: false
+    });
+
+    const dueReminders = candidates.filter((reminder) => {
+      const reminderDateTime = new Date(reminder.reminderDate);
+      const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
+      reminderDateTime.setHours(parseInt(hours, 10) || 0, parseInt(minutes, 10) || 0, 0, 0);
+      return reminderDateTime <= now;
+    });
+
+    if (dueReminders.length > 0) {
+      for (const reminder of dueReminders) {
+        await Notification.create({
+          user: userId,
+          fromUser: userId,
+          type: 'reminder_due',
+          message: `Reminder due: ${reminder.title}`,
+          relatedId: reminder._id,
+          relatedModel: 'Reminder'
+        });
+        reminder.notificationSent = true;
+        await reminder.save();
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      count: dueReminders.length,
+      reminders: dueReminders
+    });
+  } catch (error) {
+    console.error('Check due reminders error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to check due reminders',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Scheduled job to check due reminders periodically
+let reminderCheckInterval = null;
+
+export const startReminderCheckJob = (intervalMinutes = 1) => {
+  // Stop existing interval if any
+  if (reminderCheckInterval) {
+    clearInterval(reminderCheckInterval);
+    console.log('🛑 Stopped existing reminder check job');
+  }
+
+  console.log(`🔄 Starting reminder check job: Will check every ${intervalMinutes} minute(s)`);
+
+  // Run check immediately on startup
+  console.log('🚀 Running initial reminder check...');
+  checkAllDueReminders().catch(err => {
+    console.error('❌ Error in initial reminder check:', err);
+  });
+
+  // Run check every minute (default) or specified interval
+  const intervalMs = intervalMinutes * 60 * 1000;
+  reminderCheckInterval = setInterval(() => {
+    checkAllDueReminders().catch(err => {
+      console.error('❌ Error in scheduled reminder check:', err);
+    });
+  }, intervalMs);
+
+  console.log(`✅ Reminder check job started successfully (interval: ${intervalMinutes} minute(s), ${intervalMs}ms)`);
+  
+  return reminderCheckInterval;
+};
+
+// Stop reminder check job
+export const stopReminderCheckJob = () => {
+  if (reminderCheckInterval) {
+    clearInterval(reminderCheckInterval);
+    reminderCheckInterval = null;
+    console.log('🛑 Reminder check job stopped');
+  }
+};
