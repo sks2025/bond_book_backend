@@ -117,7 +117,7 @@ const httpServer = createServer(app);
 const io = initializeSocket(httpServer);
 setSocketIO(io);
 
-httpServer.listen(PORT,"192.168.1.8", () => {
+httpServer.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     console.log(`http://localhost:${PORT}`);
     console.log(`Socket.IO is ready for real-time messaging`);
