@@ -10,7 +10,10 @@ const notificationSchema = new mongoose.Schema({
   fromUser: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: function() {
+      // fromUser is not required for reminder_due notifications
+      return this.type !== 'reminder_due';
+    }
   },
   type: {
     type: String,

@@ -130,46 +130,109 @@ reminderSchema.methods.snoozeReminder = function(minutes) {
   return this.save();
 };
 
-// Static method to get upcoming reminders
-reminderSchema.statics.getUpcoming = function(userId, limit = 10) {
+// Static method to get upcoming reminders (local timezone)
+reminderSchema.statics.getUpcoming = async function(userId, limit = 10) {
   const now = new Date();
-  return this.find({
-    user: userId,
-    isCompleted: false,
-    reminderDate: { $gte: now }
-  })
-  .sort({ reminderDate: 1 })
-  .limit(limit);
-};
 
-// Static method to get overdue reminders
-reminderSchema.statics.getOverdue = function(userId) {
-  const now = new Date();
-  return this.find({
-    user: userId,
-    isCompleted: false,
-    reminderDate: { $lt: now }
-  })
-  .sort({ reminderDate: -1 });
-};
+  // Get today's LOCAL date as YYYY-MM-DD string
+  const todayYear = now.getFullYear();
+  const todayMonth = String(now.getMonth() + 1).padStart(2, '0');
+  const todayDay = String(now.getDate()).padStart(2, '0');
+  const todayStr = `${todayYear}-${todayMonth}-${todayDay}`;
+  const currentHours = now.getHours();
+  const currentMinutes = now.getMinutes();
 
-// Static method to get today's reminders
-reminderSchema.statics.getToday = function(userId) {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-  
-  const endOfDay = new Date();
-  endOfDay.setHours(23, 59, 59, 999);
-  
-  return this.find({
+  const allReminders = await this.find({
     user: userId,
-    isCompleted: false,
-    reminderDate: {
-      $gte: startOfDay,
-      $lte: endOfDay
+    isCompleted: false
+  }).sort({ reminderDate: 1, reminderTime: 1 });
+
+  // Filter for upcoming: future dates OR today but time not yet passed
+  const upcoming = allReminders.filter((reminder) => {
+    const reminderDate = new Date(reminder.reminderDate);
+    const reminderYear = reminderDate.getFullYear();
+    const reminderMonth = String(reminderDate.getMonth() + 1).padStart(2, '0');
+    const reminderDay = String(reminderDate.getDate()).padStart(2, '0');
+    const reminderDateStr = `${reminderYear}-${reminderMonth}-${reminderDay}`;
+
+    // Future date
+    if (reminderDateStr > todayStr) return true;
+
+    // Today but time not yet passed
+    if (reminderDateStr === todayStr) {
+      const [hours = 0, minutes = 0] = (reminder.reminderTime || '00:00').split(':').map(Number);
+      return (hours > currentHours) || (hours === currentHours && minutes > currentMinutes);
     }
-  })
-  .sort({ reminderTime: 1 });
+
+    return false;
+  });
+
+  return upcoming.slice(0, limit);
+};
+
+// Static method to get overdue reminders (local timezone)
+reminderSchema.statics.getOverdue = async function(userId) {
+  const now = new Date();
+
+  // Get today's LOCAL date as YYYY-MM-DD string
+  const todayYear = now.getFullYear();
+  const todayMonth = String(now.getMonth() + 1).padStart(2, '0');
+  const todayDay = String(now.getDate()).padStart(2, '0');
+  const todayStr = `${todayYear}-${todayMonth}-${todayDay}`;
+  const currentHours = now.getHours();
+  const currentMinutes = now.getMinutes();
+
+  const allReminders = await this.find({
+    user: userId,
+    isCompleted: false
+  }).sort({ reminderDate: -1, reminderTime: -1 });
+
+  // Filter for overdue: past dates OR today but time has passed
+  return allReminders.filter((reminder) => {
+    const reminderDate = new Date(reminder.reminderDate);
+    const reminderYear = reminderDate.getFullYear();
+    const reminderMonth = String(reminderDate.getMonth() + 1).padStart(2, '0');
+    const reminderDay = String(reminderDate.getDate()).padStart(2, '0');
+    const reminderDateStr = `${reminderYear}-${reminderMonth}-${reminderDay}`;
+
+    // Past date
+    if (reminderDateStr < todayStr) return true;
+
+    // Today but time has passed
+    if (reminderDateStr === todayStr) {
+      const [hours = 0, minutes = 0] = (reminder.reminderTime || '00:00').split(':').map(Number);
+      return (hours < currentHours) || (hours === currentHours && minutes <= currentMinutes);
+    }
+
+    return false;
+  });
+};
+
+// Static method to get today's reminders (local timezone)
+reminderSchema.statics.getToday = async function(userId) {
+  const now = new Date();
+
+  // Get today's LOCAL date as YYYY-MM-DD string
+  const todayYear = now.getFullYear();
+  const todayMonth = String(now.getMonth() + 1).padStart(2, '0');
+  const todayDay = String(now.getDate()).padStart(2, '0');
+  const todayStr = `${todayYear}-${todayMonth}-${todayDay}`;
+
+  // Get all incomplete reminders and filter by today's date
+  const allReminders = await this.find({
+    user: userId,
+    isCompleted: false
+  }).sort({ reminderTime: 1 });
+
+  // Filter using LOCAL date string comparison
+  return allReminders.filter((reminder) => {
+    const reminderDate = new Date(reminder.reminderDate);
+    const reminderYear = reminderDate.getFullYear();
+    const reminderMonth = String(reminderDate.getMonth() + 1).padStart(2, '0');
+    const reminderDay = String(reminderDate.getDate()).padStart(2, '0');
+    const reminderDateStr = `${reminderYear}-${reminderMonth}-${reminderDay}`;
+    return reminderDateStr === todayStr;
+  });
 };
 
 // Pre-save hook for recurring reminders

@@ -1,14 +1,30 @@
 import multer from "multer";
 import path from "path";
+import fs from "fs";
+
+// Ensure upload directories exist
+const uploadDirs = ["uploads/images", "uploads/videos"];
+uploadDirs.forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`📁 Created directory: ${dir}`);
+  }
+});
 
 // Simple storage configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
+    let destDir = "uploads/images";
     if (file.mimetype.startsWith("image/")) {
-      cb(null, "uploads/images");
+      destDir = "uploads/images";
     } else if (file.mimetype.startsWith("video/")) {
-      cb(null, "uploads/videos");
+      destDir = "uploads/videos";
     }
+    // Ensure directory exists before saving
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+    cb(null, destDir);
   },
   filename: (req, file, cb) => {
     const uniqueName = `${Date.now()}-${file.originalname}`;

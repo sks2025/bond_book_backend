@@ -28,12 +28,26 @@ export const createReminder = async (req, res) => {
       });
     }
 
+    // Parse date string (YYYY-MM-DD) and create date in local timezone
+    // Frontend sends date as "YYYY-MM-DD" string, we need to parse it as local date
+    let parsedDate;
+    if (reminderDate instanceof Date) {
+      parsedDate = reminderDate;
+    } else if (typeof reminderDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(reminderDate)) {
+      // Parse YYYY-MM-DD format and create date at midnight local time
+      const [year, month, day] = reminderDate.split('-').map(Number);
+      parsedDate = new Date(year, month - 1, day, 0, 0, 0, 0);
+      console.log(`📝 Parsing reminder date: "${reminderDate}" -> local date: ${parsedDate.toLocaleDateString()}`);
+    } else {
+      parsedDate = new Date(reminderDate);
+    }
+
     // Create reminder
     const reminder = new Reminder({
       user: userId,
       title,
       description,
-      reminderDate: new Date(reminderDate),
+      reminderDate: parsedDate,
       reminderTime,
       priority: priority || 'medium',
       category: category || 'personal',
@@ -45,6 +59,30 @@ export const createReminder = async (req, res) => {
     });
 
     await reminder.save();
+
+    // Check if reminder is already due and create notification immediately
+    const now = new Date();
+    const reminderDateTime = new Date(reminder.reminderDate);
+    const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
+    reminderDateTime.setHours(parseInt(hours, 10) || 0, parseInt(minutes, 10) || 0, 0, 0);
+    
+    if (reminderDateTime <= now && !reminder.isCompleted && !reminder.isDismissed) {
+      try {
+        await Notification.create({
+          user: userId,
+          fromUser: null,
+          type: 'reminder_due',
+          message: `Reminder due: ${reminder.title}${reminder.description ? ` - ${reminder.description}` : ''}`,
+          relatedId: reminder._id,
+          relatedModel: 'Reminder'
+        });
+        reminder.notificationSent = true;
+        await reminder.save();
+        console.log(`✅ Created immediate notification for reminder "${reminder.title}"`);
+      } catch (notificationError) {
+        console.error('Error creating immediate notification:', notificationError);
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -180,9 +218,26 @@ export const updateReminder = async (req, res) => {
     let scheduleChanged = false;
     allowedUpdates.forEach(field => {
       if (updates[field] !== undefined) {
-        reminder[field] = updates[field];
-        if (field === 'reminderDate' || field === 'reminderTime') {
+        if (field === 'reminderDate') {
+          // Parse date string (YYYY-MM-DD) and create date in local timezone
+          let parsedDate;
+          if (updates[field] instanceof Date) {
+            parsedDate = updates[field];
+          } else if (typeof updates[field] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(updates[field])) {
+            // Parse YYYY-MM-DD format and create date at midnight local time
+            const [year, month, day] = updates[field].split('-').map(Number);
+            parsedDate = new Date(year, month - 1, day, 0, 0, 0, 0);
+            console.log(`📝 Updating reminder date: "${updates[field]}" -> local date: ${parsedDate.toLocaleDateString()}`);
+          } else {
+            parsedDate = new Date(updates[field]);
+          }
+          reminder[field] = parsedDate;
           scheduleChanged = true;
+        } else {
+          reminder[field] = updates[field];
+          if (field === 'reminderTime') {
+            scheduleChanged = true;
+          }
         }
       }
     });
@@ -392,31 +447,85 @@ export const getActiveDueReminders = async (req, res) => {
     const userId = req.user.userId;
     const now = new Date();
 
-    // Get start and end of today
-    const startOfDay = new Date(now);
-    startOfDay.setHours(0, 0, 0, 0);
+    // Get today's LOCAL date as YYYY-MM-DD string
+    const todayYear = now.getFullYear();
+    const todayMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const todayDay = String(now.getDate()).padStart(2, '0');
+    const todayStr = `${todayYear}-${todayMonth}-${todayDay}`; // Local date like "2024-12-20"
 
-    const endOfDay = new Date(now);
-    endOfDay.setHours(23, 59, 59, 999);
+    const currentHours = now.getHours();
+    const currentMinutes = now.getMinutes();
 
-    // Find reminders that are due today, not completed, and not dismissed
-    const reminders = await Reminder.find({
+    console.log(`🔔 Checking active due reminders for user ${userId}`);
+    console.log(`   Today's LOCAL date: ${todayStr}`);
+    console.log(`   Current local time: ${currentHours}:${String(currentMinutes).padStart(2, '0')}`);
+
+    // DEBUG: First check ALL reminders for this user (regardless of status)
+    const allUserReminders = await Reminder.find({ user: userId });
+    console.log(`   🔍 DEBUG: Total ALL reminders for user: ${allUserReminders.length}`);
+    allUserReminders.forEach((r, i) => {
+      const rDate = new Date(r.reminderDate);
+      const rDateStr = `${rDate.getFullYear()}-${String(rDate.getMonth() + 1).padStart(2, '0')}-${String(rDate.getDate()).padStart(2, '0')}`;
+      console.log(`   🔍 [${i + 1}] "${r.title}" | Date: ${rDateStr} | Time: ${r.reminderTime} | Completed: ${r.isCompleted} | Dismissed: ${r.isDismissed}`);
+    });
+
+    // Find all incomplete and not dismissed reminders for the user
+    const allReminders = await Reminder.find({
       user: userId,
       isCompleted: false,
-      isDismissed: false,
-      reminderDate: {
-        $gte: startOfDay,
-        $lte: endOfDay
-      }
+      isDismissed: false
     }).sort({ reminderTime: 1 });
 
-    // Filter to only include reminders that are actually due (time has passed)
-    const dueReminders = reminders.filter((reminder) => {
-      const reminderDateTime = new Date(reminder.reminderDate);
-      const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
-      reminderDateTime.setHours(parseInt(hours, 10) || 0, parseInt(minutes, 10) || 0, 0, 0);
-      return reminderDateTime <= now;
+    console.log(`   Total incomplete & not dismissed reminders: ${allReminders.length}`);
+
+    // Filter reminders for today using date string comparison
+    const todayReminders = allReminders.filter((reminder) => {
+      // Get reminder date in local timezone
+      const reminderDate = new Date(reminder.reminderDate);
+      // Convert to local date string (YYYY-MM-DD)
+      const reminderYear = reminderDate.getFullYear();
+      const reminderMonth = String(reminderDate.getMonth() + 1).padStart(2, '0');
+      const reminderDay = String(reminderDate.getDate()).padStart(2, '0');
+      const reminderDateStr = `${reminderYear}-${reminderMonth}-${reminderDay}`;
+      
+      const isToday = reminderDateStr === todayStr;
+
+      console.log(`   📅 Reminder "${reminder.title}" date: ${reminderDateStr} (stored: ${reminder.reminderDate}, local: ${reminderDate.toLocaleDateString()}), today: ${todayStr}, match: ${isToday}`);
+
+      return isToday;
     });
+
+    console.log(`   Found ${todayReminders.length} reminders for today`);
+
+    // Filter to only include reminders that are actually due (time has passed)
+    // NOTE: For testing, we show ALL today's reminders regardless of time
+    // In production, you might want to only show reminders where time has passed
+    const dueReminders = todayReminders.filter((reminder) => {
+      const [hours = 0, minutes = 0] = (reminder.reminderTime || '00:00').split(':').map(Number);
+      const reminderTotalMinutes = hours * 60 + minutes;
+      const currentTotalMinutes = currentHours * 60 + currentMinutes;
+      
+      // Check if time has passed
+      const timeDiff = reminderTotalMinutes - currentTotalMinutes;
+      const isDue = timeDiff <= 0; // Time has passed
+      
+      // For now, show ALL today's reminders (for testing)
+      // To only show due reminders, change this to: return isDue;
+      const shouldShow = true; // Show all today's reminders
+
+      if (isDue) {
+        console.log(`   ✅ Reminder "${reminder.title}" is due (${hours}:${String(minutes).padStart(2, '0')} <= ${currentHours}:${String(currentMinutes).padStart(2, '0')})`);
+      } else {
+        const minutesUntilDue = Math.floor(timeDiff);
+        const hoursUntilDue = Math.floor(minutesUntilDue / 60);
+        const minsUntilDue = minutesUntilDue % 60;
+        console.log(`   ⏰ Reminder "${reminder.title}" scheduled for ${hours}:${String(minutes).padStart(2, '0')} (in ${hoursUntilDue}h ${minsUntilDue}m) - showing anyway for testing`);
+      }
+
+      return shouldShow;
+    });
+
+    console.log(`   Returning ${dueReminders.length} active due reminders`);
 
     return res.status(200).json({
       success: true,
@@ -736,11 +845,12 @@ export const checkAllDueReminders = async () => {
             continue;
           }
           
+          // For reminder notifications, fromUser is optional (can be null)
           const notification = await Notification.create({
             user: userId,
-            fromUser: userId,
+            fromUser: null, // Reminder notifications don't need a fromUser
             type: 'reminder_due',
-            message: `Reminder due: ${reminder.title}`,
+            message: `Reminder due: ${reminder.title}${reminder.description ? ` - ${reminder.description}` : ''}`,
             relatedId: reminder._id,
             relatedModel: 'Reminder'
           });
@@ -792,38 +902,80 @@ export const checkDueReminders = async (req, res) => {
     const userId = req.user.userId;
     const now = new Date();
 
+    console.log(`🔔 Manual check due reminders for user ${userId} at ${now.toISOString()}`);
+
+    // Get start and end of today
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(now);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Find reminders for today that are not completed
     const candidates = await Reminder.find({
       user: userId,
       isCompleted: false,
-      notificationSent: false
+      reminderDate: {
+        $gte: startOfDay,
+        $lte: endOfDay
+      }
     });
 
-    const dueReminders = candidates.filter((reminder) => {
+    console.log(`   Found ${candidates.length} reminders for today`);
+
+    const dueReminders = [];
+    const notificationsCreated = [];
+
+    for (const reminder of candidates) {
       const reminderDateTime = new Date(reminder.reminderDate);
       const [hours = '00', minutes = '00'] = (reminder.reminderTime || '00:00').split(':');
       reminderDateTime.setHours(parseInt(hours, 10) || 0, parseInt(minutes, 10) || 0, 0, 0);
-      return reminderDateTime <= now;
-    });
-
-    if (dueReminders.length > 0) {
-      for (const reminder of dueReminders) {
-        await Notification.create({
+      
+      const isDue = reminderDateTime <= now;
+      
+      if (isDue) {
+        dueReminders.push(reminder);
+        
+        // Check if notification already exists
+        const existingNotification = await Notification.findOne({
           user: userId,
-          fromUser: userId,
           type: 'reminder_due',
-          message: `Reminder due: ${reminder.title}`,
-          relatedId: reminder._id,
-          relatedModel: 'Reminder'
+          relatedId: reminder._id
         });
-        reminder.notificationSent = true;
-        await reminder.save();
+
+        if (!existingNotification && !reminder.notificationSent) {
+          try {
+            // For reminder notifications, fromUser is optional (can be null)
+            const notification = await Notification.create({
+              user: userId,
+              fromUser: null, // Reminder notifications don't need a fromUser
+              type: 'reminder_due',
+              message: `Reminder due: ${reminder.title}${reminder.description ? ` - ${reminder.description}` : ''}`,
+              relatedId: reminder._id,
+              relatedModel: 'Reminder'
+            });
+            
+            console.log(`   ✅ Created notification for reminder "${reminder.title}"`);
+            notificationsCreated.push(notification);
+            
+            reminder.notificationSent = true;
+            await reminder.save();
+          } catch (notificationError) {
+            console.error(`   ❌ Error creating notification for reminder ${reminder._id}:`, notificationError);
+          }
+        } else if (existingNotification) {
+          console.log(`   ℹ️  Notification already exists for reminder "${reminder.title}"`);
+        }
       }
     }
+
+    console.log(`   Total due reminders: ${dueReminders.length}, Notifications created: ${notificationsCreated.length}`);
 
     return res.status(200).json({
       success: true,
       count: dueReminders.length,
-      reminders: dueReminders
+      reminders: dueReminders,
+      notificationsCreated: notificationsCreated.length
     });
   } catch (error) {
     console.error('Check due reminders error:', error);

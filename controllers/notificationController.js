@@ -36,8 +36,13 @@ export const getNotifications = async (req, res) => {
     
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    // Get all notifications, including those with null fromUser (reminder notifications)
     const notifications = await Notification.find({ user: userId })
-      .populate('fromUser', 'username profilePicture')
+      .populate({
+        path: 'fromUser',
+        select: 'username profilePicture',
+        options: { strictPopulate: false } // Don't fail if fromUser is null
+      })
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip(skip);
@@ -75,11 +80,16 @@ export const getUnreadNotifications = async (req, res) => {
     const userId = req.user.userId;
     const { limit = 20 } = req.query;
 
+    // Get unread notifications, including those with null fromUser (reminder notifications)
     const notifications = await Notification.find({ 
       user: userId, 
       isRead: false 
     })
-      .populate('fromUser', 'username profilePicture')
+      .populate({
+        path: 'fromUser',
+        select: 'username profilePicture',
+        options: { strictPopulate: false } // Don't fail if fromUser is null
+      })
       .sort({ createdAt: -1 })
       .limit(parseInt(limit));
 
