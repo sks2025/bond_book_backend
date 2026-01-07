@@ -84,9 +84,14 @@ export async function register(request, response) {
       `;
 
       await sendEmail(email, subject, text, html);
+      console.log(`✅ OTP email sent successfully to: ${email}`);
     } catch (emailError) {
-      console.error('Email sending failed:', emailError);
-      // Don't fail registration if email fails
+      console.error('❌ Email sending failed during registration:');
+      console.error('   Email:', email);
+      console.error('   Error Code:', emailError.code);
+      console.error('   Error Message:', emailError.message);
+      console.error('   Full Error:', emailError);
+      // Don't fail registration if email fails, but log the error
     }
 
     return response.status(200).json({ 
